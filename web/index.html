@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#33594b">
+  <meta name="description" content="书屿，你的私人本地书架。整理小说，收藏故事，接着上次读。">
+  <title>书屿 · 私人书架</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="/" aria-label="书屿首页"><img src="/favicon.svg" alt=""><span>书屿<small>让故事，各有归处</small></span></a>
+      <div class="side-label">我的图书馆 <span>LIBRARY</span></div>
+      <nav id="main-nav" aria-label="书库导航">
+        <button data-view="all" class="nav-item active"><span data-icon="library"></span>全部藏书<b id="count-all">—</b></button>
+        <button data-view="reading" class="nav-item"><span data-icon="book-open"></span>正在阅读<b id="count-reading">0</b></button>
+        <button data-view="favorites" class="nav-item"><span data-icon="heart"></span>我的收藏<b id="count-favorites">0</b></button>
+        <button data-view="recent" class="nav-item"><span data-icon="clock"></span>最近阅读<b id="count-recent">0</b></button>
+        <button data-view="done" class="nav-item"><span data-icon="check-circle"></span>已经读完<b id="count-done">0</b></button>
+      </nav>
+      <div class="side-label collection-label">文件夹 <span id="folder-count">COLLECTIONS</span></div>
+      <div class="folder-nav" id="folder-nav"><div class="muted small side-placeholder">正在连接书库…</div></div>
+      <div class="sidebar-bottom">
+        <div class="local-badge"><i></i><span>本地书库<small id="source-name">正在连接</small></span><span data-icon="shield"></span></div>
+        <button id="settings-button" class="nav-item"><span data-icon="settings"></span>书库设置<span data-icon="arrow-up-right"></span></button>
+      </div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumb"><button class="icon-button mobile-menu" id="menu-button" aria-label="展开导航"><span data-icon="menu"></span></button><span>我的图书馆</span><span class="slash">/</span><strong id="breadcrumb-current">全部藏书</strong></div>
+        <div class="top-actions"><span class="local-only"><span data-icon="lock"></span>只属于你的阅读空间</span><button id="scan-button" class="button secondary"><span data-icon="refresh"></span><span>扫描书库</span></button></div>
+      </header>
+      <main id="library-main">
+        <section class="page-heading"><div><div class="eyebrow">A LITTLE ISLAND OF STORIES</div><h1 id="page-title">每个故事，都值得安放<span>。</span></h1><p id="page-subtitle">把喜欢的文字留在身边，随时回到故事里。</p></div><div class="heading-stamp"><span data-icon="sparkles"></span><span>慢慢读<br>也慢慢收藏</span></div></section>
+        <section class="overview" aria-label="书库概况">
+          <div class="stat-item"><div class="stat-icon" data-icon="library"></div><div><span>书架上的故事</span><strong id="stat-total">—<small>部</small></strong></div></div>
+          <div class="stat-item"><div class="stat-icon terracotta" data-icon="book-open"></div><div><span>正在读的故事</span><strong id="stat-reading">0<small>部</small></strong></div></div>
+          <div class="stat-item"><div class="stat-icon gold" data-icon="heart"></div><div><span>偏爱的故事</span><strong id="stat-favorites">0<small>部</small></strong></div></div>
+          <div class="scan-summary"><span class="scan-dot" id="scan-dot"></span><div><strong id="scan-label">正在连接书库</strong><small id="scan-time">新故事会自动出现在这里</small></div></div>
+        </section>
+        <section class="continue-banner" id="continue-banner">
+          <div class="banner-art" aria-hidden="true"><div class="art-circle"></div><div class="art-book book-back"></div><div class="art-book book-front"><i></i><span>故事<br>未完待续</span></div><div class="art-leaf">✦</div></div>
+          <div class="continue-copy"><span class="eyebrow">YOUR NEXT CHAPTER</span><h2 id="continue-title">给自己留一点，读故事的时间。</h2><p id="continue-description">不必整理好一切，先从喜欢的那一本开始。</p><div id="continue-progress" class="banner-progress" hidden><i></i><span></span></div></div>
+          <button id="continue-button" class="button primary">逛逛我的书架<span data-icon="arrow-right"></span></button>
+        </section>
+        <section class="shelf-section">
+          <div class="shelf-heading"><div><h2 id="shelf-title">全部藏书</h2><span id="result-count">正在整理书架…</span></div><div class="view-toggle" role="group" aria-label="显示方式"><button class="active icon-button" data-layout="grid" aria-label="封面视图"><span data-icon="grid"></span></button><button class="icon-button" data-layout="list" aria-label="列表视图"><span data-icon="list"></span></button></div></div>
+          <div class="toolbar"><label class="search-field"><span data-icon="search"></span><input id="search-input" placeholder="搜索书名、作者、标签或文件夹…" autocomplete="off"><kbd>/</kbd><button id="clear-search" class="icon-button" aria-label="清空搜索" hidden>×</button></label><select id="sort-select" aria-label="排序"><option value="modified">最近更新</option><option value="added">最近加入</option><option value="title">书名排序</option><option value="recent">最近阅读</option><option value="size">文件大小</option></select></div>
+          <div class="filter-bar"><div id="kind-filters" class="kind-filters"><button class="filter active" data-kind="">全部格式</button><button class="filter" data-kind="text">TXT 文本</button><button class="filter" data-kind="epub">EPUB</button><button class="filter" data-kind="pdf">PDF</button><button class="filter" data-kind="archive">压缩包</button><button class="filter" data-kind="comic">漫画相册</button><button class="filter" data-kind="other">其他</button></div><button id="reset-filters" class="text-button" hidden>重置筛选</button></div>
+          <div id="library-error" class="notice" role="status" hidden></div>
+          <div id="book-grid" class="book-grid" aria-live="polite"></div>
+          <div id="empty-state" class="empty-state" hidden><span data-icon="book-open"></span><h3>这里还没有故事</h3><p>试试其他关键词，或把新文件放进书库后扫描。</p><button id="empty-action" class="button secondary">查看全部藏书</button></div>
+          <div class="pagination" id="pagination"></div>
+        </section>
+        <footer class="page-footer"><span><img src="/favicon.svg" alt="">书屿 · 故事在这里，等你回来。</span><span>本地储存 · 每 5 分钟自动扫描</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="detail-dialog" class="detail-dialog"><div id="detail-content"></div></dialog>
+  <dialog id="settings-dialog" class="settings-dialog">
+    <div class="dialog-heading"><div><div class="eyebrow">YOUR PRIVATE LIBRARY</div><h2>书库设置</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="关闭">×</button></div>
+    <p class="muted">故事留在原处，书屿帮你记住它们。</p>
+    <form id="settings-form"><label class="field-label" for="root-input">书库文件夹</label><input id="root-input" class="full-input" required placeholder="例如 Z:\老婆小说漫画"><p class="field-help">会递归扫描子文件夹；新增文件在运行期间自动发现。更换路径会切换书库，原阅读记录仍保留。</p><button class="button primary" type="submit"><span data-icon="folder"></span>保存并扫描</button></form>
+    <div class="settings-divider"></div><h3>阅读记录备份</h3><p class="field-help">导出收藏、标签、笔记和阅读位置。恢复时按相对路径匹配当前书库，并覆盖匹配书籍的记录。</p><div class="button-row"><a class="button secondary" href="/api/export" download="书屿阅读记录.json"><span data-icon="download"></span>导出记录</a><label class="button secondary" for="import-file"><span data-icon="upload"></span>恢复备份</label><input id="import-file" type="file" accept=".json" hidden></div>
+    <div class="settings-divider"></div><div class="format-help"><span data-icon="info"></span><p>TXT、EPUB、DOCX 可直接读，PDF 使用浏览器阅读器；ZIP、RAR、7Z 可浏览包内文件，图片文件夹可连贯看图。MOBI、AZW3、旧版 DOC 等可调用系统应用。加密或特殊压缩包需要先解压。</p></div>
+  </dialog>
+  <section id="reader" class="reader" hidden aria-label="阅读器">
+    <header class="reader-header"><button id="reader-back" class="button ghost"><span data-icon="arrow-left"></span>返回书架</button><div class="reader-title"><strong id="reader-title"></strong><small id="reader-subtitle"></small></div><div class="reader-tools"><button id="reader-toc-button" class="icon-button" title="目录" aria-label="目录"><span data-icon="list"></span></button><button id="font-down" class="icon-button" aria-label="缩小字号">A−</button><button id="font-up" class="icon-button" aria-label="放大字号">A+</button><button id="reader-theme" class="icon-button" title="切换阅读配色" aria-label="切换阅读配色"><span data-icon="moon"></span></button></div></header>
+    <div class="reader-body"><aside id="reader-toc" class="reader-toc" hidden><h3>章节目录</h3><div id="toc-items"></div></aside><div class="reader-scroll" id="reader-scroll"><div id="reader-loading" class="reader-loading" hidden>正在翻开故事…</div><article id="reader-text" class="reader-text"></article><div id="comic-pages" class="comic-pages" hidden></div><iframe id="pdf-frame" title="PDF 阅读器" hidden></iframe><div class="reader-end" id="reader-end" hidden><span>本书已到最后一页</span><button id="mark-finished" class="button secondary"><span data-icon="check-circle"></span>标记为已读完</button></div></div></div>
+    <footer class="reader-footer"><button id="prev-page" class="button ghost"><span data-icon="chevron-left"></span>上一页</button><span id="reader-progress"></span><button id="next-page" class="button ghost">下一页<span data-icon="chevron-right"></span></button></footer>
+  </section>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
