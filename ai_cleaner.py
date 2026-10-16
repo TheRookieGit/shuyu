@@ -245,11 +245,15 @@ class ClaudeClient:
     def __init__(self,config,key):self.config,self.key=config,key
 
     def analyze(self,segment,context_before='',context_after='',categories=()):
+        result,usage=self.generate({'enabled_categories':list(categories),'context_before':context_before,'segment':segment,'context_after':context_after},SYSTEM,SCHEMA)
+        if not isinstance(result.get('edits'),list):raise CleanError('Claude 没有返回有效的修改清单。')
+        return result,usage
+
+    def generate(self,data,system,schema):
         if not self.key:raise CleanError('请先在 Claude AI 设置中填写 API Key。')
         payload={'model':self.config['model'],'max_tokens':16384,'thinking':{'type':'disabled'},
-                 'system':SYSTEM,'messages':[{'role':'user','content':json.dumps({'enabled_categories':list(categories),
-                   'context_before':context_before,'segment':segment,'context_after':context_after},ensure_ascii=False)}],
-                 'output_config':{'effort':'low','format':{'type':'json_schema','schema':SCHEMA}}}
+                 'system':system,'messages':[{'role':'user','content':json.dumps(data,ensure_ascii=False)}],
+                 'output_config':{'effort':'low','format':{'type':'json_schema','schema':schema}}}
         request=urllib.request.Request(self.config['base_url']+'/messages',data=json.dumps(payload,ensure_ascii=False).encode(),
             headers={'Content-Type':'application/json','x-api-key':self.key,'anthropic-version':'2023-06-01','User-Agent':'Shuyu/3.0'})
         opener=urllib.request.build_opener(NoRedirect())
@@ -268,7 +272,7 @@ class ClaudeClient:
         if body.get('stop_reason') not in {'end_turn','stop_sequence'}:raise CleanError('Claude 输出未完整结束，当前片段没有应用。')
         try:result=json.loads(''.join(b.get('text','') for b in body['content'] if b.get('type')=='text'))
         except (ValueError,TypeError,AttributeError):raise CleanError('Claude 没有返回有效 JSON，当前片段没有应用。')
-        if not isinstance(result,dict) or not isinstance(result.get('edits'),list):raise CleanError('Claude 没有返回有效的修改清单。')
+        if not isinstance(result,dict):raise CleanError('Claude 没有返回有效的结构化结果。')
         usage=body.get('usage',{})
         return result,usage if isinstance(usage,dict) else {}
 

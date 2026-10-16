@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
 from platform_utils import reveal_in_explorer
 from ai_cleaner import Cleaner, CleanError
+from book_classification import Classifier, TAXONOMY
+from app_runtime import bind_server, runtime_identity
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -87,6 +89,7 @@ class Library:
                 db.execute('INSERT INTO settings VALUES (?,?)',('root',DEFAULT_ROOT))
         self.engine = ArchiveEngine(self.data_dir,self.passwords)
         self.cleaner = Cleaner(self)
+        self.classifier = Classifier(self)
 
     @contextmanager
     def db(self):
@@ -253,11 +256,13 @@ class Library:
         book['path'] = str(Path(book['root'])/(book['container'] or book['rel']))
         book['versions'] = self.versions(uid)
         book['version_count'] = 1+len(book['versions'])
+        book['classification'] = self.classifier.classification(uid)
+        book['text_metrics'] = self.classifier.metrics(uid)
         return book
 
     def versions(self,uid):
         with self.db() as db:
-            return [dict(row) for row in db.execute('SELECT id,number,label,ext,size,created,parent_id,edit_count,model FROM book_versions WHERE book_id=? ORDER BY number DESC',(uid,))]
+            return [dict(row) for row in db.execute("SELECT id,number,label,ext,size,created,parent_id,edit_count,model,(SELECT word_count FROM book_text_metrics WHERE book_id=book_versions.book_id AND version_id=book_versions.id) word_count FROM book_versions WHERE book_id=? ORDER BY number DESC",(uid,))]
 
     def version_path(self,book,version_id=''):
         if not version_id:return self.external_path(book)
@@ -276,6 +281,7 @@ class Library:
             label=re.sub(r'[\x00-\x1f]','',label.strip())[:80] or f'AI 清理版 {number}'
             db.execute('INSERT INTO book_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                 (uid,book['id'],number,label,path.relative_to(self.data_dir).as_posix(),path.suffix.lower(),path.stat().st_size,time.time(),parent_id,edit_count,model))
+        self.classifier.measure(book['id'],uid)
         return next(v for v in self.versions(book['id']) if v['id']==uid)|{'book_id':book['id']}
 
     def path(self,book):
@@ -293,14 +299,36 @@ class Library:
             params.append('%'+word.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%')
         if query.get('kind'):
             where.append('kind=?');params.append(query['kind'])
-        order = {'added':'added DESC,mtime DESC','title':'title COLLATE NOCASE','size':'size DESC'}.get(query.get('sort'),'mtime DESC')
+        classification_where=[]
+        for field,choices in [('level',TAXONOMY['levels']),('relationship',TAXONOMY['relationships']),('pairing',TAXONOMY['pairings'])]:
+            if query.get(field):
+                if query[field] not in choices:raise UserError('无效的分类筛选。')
+                classification_where.append(f'{field}=?');params.append(query[field])
+        if query.get('tag'):
+            if query['tag'] not in TAXONOMY['tags']:raise UserError('无效的 tag。')
+            classification_where.append("EXISTS (SELECT 1 FROM json_each(book_classification.tags) WHERE value=?)");params.append(query['tag'])
+        if classification_where:where.append('id IN (SELECT book_id FROM book_classification WHERE '+' AND '.join(classification_where)+')')
+        if query.get('classification_status')=='pending':
+            where.append("id NOT IN (SELECT book_id FROM book_classification WHERE status='classified')")
+        order = {'added':'added DESC,mtime DESC','title':'title COLLATE NOCASE','size':'size DESC',
+                 'words':"(SELECT word_count FROM book_text_metrics WHERE book_id=books.id AND version_id='') DESC"}.get(query.get('sort'),'mtime DESC')
         page = max(1,int(query.get('page',1)))
         limit = min(100,max(1,int(query.get('limit',48))))
         clause = ' AND '.join(where)
         with self.db() as db:
             total = db.execute('SELECT count(*) FROM books WHERE '+clause,params).fetchone()[0]
             rows = db.execute(f'SELECT {CATALOG_FIELDS},(SELECT count(*)+1 FROM book_versions WHERE book_id=books.id) AS version_count FROM books WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
-        return {'items':[dict(row) for row in rows],'total':total,'page':page,'pages':(total+limit-1)//limit}
+            ids=[r['id'] for r in rows];classification={};metrics={}
+            if ids:
+                slots=','.join('?' for _ in ids)
+                classification={r['book_id']:dict(r) for r in db.execute(f'SELECT book_id,level,relationship,pairing,tags,status,reviewed FROM book_classification WHERE book_id IN ({slots})',ids)}
+                metrics={r['book_id']:dict(r) for r in db.execute(f"SELECT book_id,word_count,source_signature FROM book_text_metrics WHERE version_id='' AND book_id IN ({slots})",ids)}
+        items=[]
+        for row in rows:
+            item=dict(row);value=classification.get(row['id'],{'level':'','relationship':'','pairing':'','tags':'[]','status':'pending','reviewed':False})
+            value['tags']=json.loads(value['tags']);item['classification']=value;metric=metrics.get(row['id'])
+            item['word_count']=metric['word_count'] if metric and metric['source_signature']==self.classifier.signature(row) else None;items.append(item)
+        return {'items':items,'total':total,'page':page,'pages':(total+limit-1)//limit}
 
     def issues(self):
         with self.db() as db:
@@ -336,6 +364,8 @@ class Library:
         return {'ok':True,'path':str(path),'extracted':bool(source_chain(book)) and not original and not version_id}
 
     def settings(self,data):
+        if self.classifier.progress()['running']:
+            raise UserError('分类和字数统计正在进行，请完成或停止后再切换书库。')
         if self.cleaner.active:
             raise UserError('AI 任务正在处理，请完成或停止后再切换书库。')
         if self.scan_state['running']:
@@ -386,14 +416,17 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         query = {k:v[-1] for k,v in urllib.parse.parse_qs(url.query).items()}
         try:
+            if url.path=='/api/runtime' and hasattr(self.server,'runtime'):
+                return self.json({**self.server.runtime,'root':self.lib.root})
             if url.path=='/api/stats':return self.json(self.lib.stats())
             if url.path=='/api/books':return self.json(self.lib.listing(query))
             if url.path=='/api/book':return self.json(self.lib.book(query['id']))
             if url.path=='/api/issues':return self.json({'items':self.lib.issues()})
             if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config())
             if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status())
+            if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
-            static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+            static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
             if url.path in static:
                 path = BASE/'web'/static[url.path]
                 return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
@@ -413,7 +446,21 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length','0'))
             if not 0<length<=1024*1024:raise UserError('无效的请求长度。')
             data = json.loads(self.rfile.read(length))
+            if self.path=='/api/runtime/reload' and hasattr(self.server,'runtime'):
+                if data.get('instance')!=self.server.runtime['instance']:
+                    return self.json({'error':'后台服务已变化，请重新启动。'},409)
+                if self.lib.cleaner.active or self.lib.classifier.progress()['running']:
+                    return self.json({'error':'AI 或分类任务正在进行，请完成或停止后再重新启动书屿。'},409)
+                self.json({'ok':True})
+                threading.Thread(target=self.server.shutdown,daemon=True).start()
+                return
             if self.path=='/api/ai/config':return self.json(self.lib.cleaner.configure(data))
+            if self.path=='/api/classification/start':return self.json(self.lib.classifier.start(bool(data.get('force')),str(data.get('mode','missing'))))
+            if self.path=='/api/classification/stop':
+                self.lib.classifier.stop.set();return self.json({'ok':True})
+            if self.path=='/api/classification/save':return self.json(self.lib.classifier.save(data))
+            if self.path=='/api/classification/suggest':return self.json(self.lib.classifier.suggest(data))
+            if self.path=='/api/text-metrics':return self.json(self.lib.classifier.measure(data['id'],str(data.get('version_id','')),bool(data.get('force'))))
             if self.path=='/api/ai/test':return self.json(self.lib.cleaner.test_connection())
             if self.path=='/api/clean/prepare':return self.json(self.lib.cleaner.prepare(data))
             if self.path=='/api/clean/start':return self.json(self.lib.cleaner.start(data['job_id']))
@@ -439,18 +486,16 @@ def main():
     parser.add_argument('--data-dir',default=str(BASE/'.data'))
     parser.add_argument('--no-browser',action='store_true')
     args = parser.parse_args()
-    lib = Library(args.data_dir,args.root)
+    identity = runtime_identity(BASE,args.data_dir)
+    server = bind_server(args.port,Handler,identity,args.root)
+    if server is None:
+        if not args.no_browser:webbrowser.open(f'http://127.0.0.1:{args.port}')
+        return
     try:
-        server = ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
-    except OSError:
-        import urllib.request
-        try:
-            with urllib.request.urlopen(f'http://127.0.0.1:{args.port}/api/stats',timeout=2) as response:
-                if 'Shuyu/' not in response.headers.get('Server',''):raise OSError('端口被占用。')
-            if not args.no_browser:webbrowser.open(f'http://127.0.0.1:{args.port}')
-            return
-        except Exception:
-            raise SystemExit(f'端口 {args.port} 已被占用，可用 --port 指定其他端口。')
+        lib = Library(args.data_dir,args.root)
+    except BaseException:
+        server.server_close()
+        raise
     server.library = lib
     lib.start_scan()
     threading.Thread(target=lib.auto_scan,daemon=True).start()

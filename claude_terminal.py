@@ -91,13 +91,18 @@ class ClaudeTerminal:
         return status
 
     def analyze(self,segment,context_before='',context_after='',categories=()):
+        result,usage=self.generate({'enabled_categories':list(categories),'context_before':context_before,
+                           'segment':segment,'context_after':context_after},SYSTEM,SCHEMA)
+        if not isinstance(result.get('edits'),list):raise CleanError('Claude 命令行未返回有效的修改清单。')
+        return result,usage
+
+    def generate(self,data,system,schema):
         # Recheck before every fragment: a logout or changed credential must stop
         # the job, rather than silently choosing an API-billed credential.
         self.require_subscription()
-        prompt=json.dumps({'enabled_categories':list(categories),'context_before':context_before,
-                           'segment':segment,'context_after':context_after},ensure_ascii=False)
-        response=self._run(['--print','--output-format','json','--json-schema',json.dumps(SCHEMA,separators=(',',':')),
-            '--model',self.config.get('model',MODEL),'--effort','low','--system-prompt',SYSTEM,
+        prompt=json.dumps(data,ensure_ascii=False)
+        response=self._run(['--print','--output-format','json','--json-schema',json.dumps(schema,separators=(',',':')),
+            '--model',self.config.get('model',MODEL),'--effort','low','--system-prompt',system,
             '--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disallowedTools','mcp__*',
             '--disable-slash-commands','--no-chrome','--no-session-persistence','--permission-mode','dontAsk',
             '--max-turns','4'],prompt,180)
@@ -112,7 +117,7 @@ class ClaudeTerminal:
                 raise CleanError('此订阅暂时无法使用设置的模型，请在 Claude 终端确认模型权限；不会切换到 API。')
             raise CleanError(f'Claude 命令行未完成检查（退出码 {response.returncode}）。请在终端确认登录、额度和模型权限，再继续。')
         result=body.get('structured_output')
-        if not isinstance(result,dict) or not isinstance(result.get('edits'),list):
+        if not isinstance(result,dict):
             raise CleanError('Claude 命令行未返回完整的结构化建议，当前片段未应用。请更新 Claude Code 后重试。')
         usage=body.get('usage',{})
         return result,usage if isinstance(usage,dict) else {}

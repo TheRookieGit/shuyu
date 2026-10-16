@@ -23,6 +23,8 @@ def synthetic_provider(segment,*args,**kwargs):
     return {'edits':edits},{'input_tokens':123,'output_tokens':45}
 providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
     patch.object(ClaudeTerminal,'analyze',side_effect=synthetic_provider),
+    patch.object(ClaudeClient,'generate',return_value=({'level':'肉文','relationship':'BG','pairing':'np','tags':['末日'],'confidence':.98,'reason':'合成测试分类'},{})),
+    patch.object(ClaudeTerminal,'generate',return_value=({'level':'肉文','relationship':'BG','pairing':'np','tags':['末日'],'confidence':.98,'reason':'合成测试分类'},{})),
     patch.object(ClaudeTerminal,'status',return_value={'installed':True,'path':'synthetic-claude.exe',
         'logged_in':True,'auth_method':'claude.ai','subscription_type':'pro','ready':True,'message':'已登录 Claude Pro 订阅。'}),
     patch('claude_terminal.find_command',return_value=['synthetic-claude.exe']),

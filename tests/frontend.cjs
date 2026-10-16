@@ -25,7 +25,7 @@ async function run(){
   w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close=function(){if(!this.open)return;this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   // One evaluation shares the lexical environment, as two classic scripts do in a browser.
-  w.eval(readFileSync(path.join(root,'web/app.js'),'utf8')+'\n'+readFileSync(path.join(root,'web/ai.js'),'utf8'));
+  w.eval(['app.js','ai.js','classification.js'].map(file=>readFileSync(path.join(root,'web',file),'utf8')).join('\n'));
   await waitFor(()=>d.querySelectorAll('.book-card:not(.skeleton)').length===8,'flat library');
   await waitFor(()=>$('#stat-total').textContent.includes('8'),'statistics');
   for(const selector of ['#sidebar','#reader','#continue-banner','.favorite-button','#main-nav','#import-file'])assert.equal($(selector),null,selector+' removed');
@@ -114,6 +114,29 @@ async function run(){
   assert.equal(d.querySelectorAll('.book-card').length,1);assert.match($('.version-badge').textContent,/4 个版本/);
   $('[data-close="detail-dialog"]').click();$('#reset-filters').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'no duplicate terminal copies');
   console.log('PASS API/terminal setting switch, subscription detection, no API key, terminal preview/save and same-book versions');
+  assert.equal(requests.filter(r=>r.url==='/api/classification/suggest').length,0,'classification never calls Claude automatically');
+  $('#search-input').value='小舟';$('#search-input').dispatchEvent(new w.Event('input',{bubbles:true}));
+  await waitFor(()=>d.querySelectorAll('.book-card').length===1&&$('.card-title').textContent==='夜航','classification book');
+  $('.cover-button').click();await waitFor(()=>$('#detail-dialog').open&&$('#version-words').textContent==='8 字','actual text count');
+  $('#edit-level').value='肉文';$('#edit-relationship').value='BG';$('#edit-relationship').dispatchEvent(new w.Event('change'));
+  assert.ok(!$('#edit-pairing').disabled);$('#edit-pairing').value='np';$('input[name="book-tag"][value="末日"]').click();$('input[name="book-tag"][value="ABO"]').click();
+  $('#classification-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await waitFor(()=>$('.classification-method').textContent==='已人工确认','manual classification persisted');
+  assert.match($('#book-classification').textContent,/肉文/);assert.match($('#book-classification').textContent,/ABO/);
+  $('#claude-classify-book').click();await waitFor(()=>$('#apply-classification-suggestion'),'explicit Claude classification preview');
+  assert.match($('#classification-ai-preview').textContent,/合成测试分类/);assert.ok($('input[name="book-tag"][value="ABO"]').checked,'suggestion not silently applied');
+  $('#apply-classification-suggestion').click();assert.ok(!$('input[name="book-tag"][value="ABO"]').checked,'suggestion only fills draft form');
+  $('[data-close="detail-dialog"]').click();$('#reset-filters').click();
+  await waitFor(()=>d.querySelectorAll('.book-card').length===8,'classification shelf');
+  const change=(selector,value)=>{$(selector).value=value;$(selector).dispatchEvent(new w.Event('change',{bubbles:true}));};
+  change('#level-filter','肉文');change('#relationship-filter','BG');change('#pairing-filter','np');change('#tag-filter','ABO');
+  await waitFor(()=>d.querySelectorAll('.book-card').length===1&&$('.card-title').textContent==='夜航','combined taxonomy filters');
+  assert.match($('.book-classification').textContent,/肉文BGnp末日ABO/);assert.match($('.card-meta').textContent,/8 字/);
+  $('#reset-filters').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'reset taxonomy');
+  assert.equal($('#level-filter').value,'');assert.ok($('#pairing-filter').disabled);
+  $('#classification-settings-button').click();assert.ok($('#classification-dialog').open);assert.match($('#classification-dialog').textContent,/不调用 Claude/);
+  $('[data-close="classification-dialog"]').click();
+  console.log('PASS fixed taxonomy, manual correction, multiple tags, word count, combined filters and explicit-only Claude suggestion');
   assert.ok(!requests.some(r=>/\/api\/(update|progress|export|import)/.test(r.url)),'no activity or annotation writes');
   assert.deepEqual(errors,[],'no frontend runtime errors');
   console.log('All catalog integration checks passed (DOM; visual rendering not covered).');
