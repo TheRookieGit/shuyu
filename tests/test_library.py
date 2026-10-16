@@ -1,198 +1,241 @@
+import ctypes
 import io
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import Mock, patch
 import urllib.error
 import urllib.request
 import zipfile
 
-from server import Library, Handler, ThreadingHTTPServer, UserError, decode_text
+from archive_engine import ArchiveEngine, ArchiveError, member_key, source_chain, zip_label
+from platform_utils import reveal_in_explorer
+from server import Library, Handler, ThreadingHTTPServer
+
+TOOL = Path(__file__).resolve().parents[1]/'.data/tools/7zip-26.04/7z.exe'
+TOOL = str(TOOL) if TOOL.is_file() else shutil.which('7z')
+
+
+def packed(files):
+    stream=io.BytesIO()
+    with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as zf:
+        for name,content in files.items():zf.writestr(name,content)
+    return stream.getvalue()
 
 
 class LibraryFixture:
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name) / 'books'
+        self.tool_patch=patch.object(ArchiveEngine,'ensure_tool',return_value=TOOL)
+        self.tool_patch.start()
+        self.temp=tempfile.TemporaryDirectory()
+        self.root=Path(self.temp.name)/'books'
         self.root.mkdir()
-        self.data = Path(self.temp.name) / 'data'
-        (self.root / '第一组').mkdir()
-        self.text = '第一章 开始\n' + ('春日的故事。\n' * 5000) + '\n第二章 继续\n最后的故事。'
-        (self.root / '第一组' / '《春日》作者：小林.txt').write_bytes(self.text.encode('gb18030'))
-        (self.root / '第二本.txt').write_text('序章\n你好世界',encoding='utf-8-sig')
-        (self.root / 'draft.txt.downloading').write_bytes(b'incomplete')
-        (self.root / '.DS_Store').write_bytes(b'junk')
-        (self.root / 'note.txt.bak').write_bytes(b'backup')
-        (self.root / '画集').mkdir()
-        for name in ['10.jpg','2.jpg','1.jpg']:
-            (self.root / '画集' / name).write_bytes(b'image')
-        with zipfile.ZipFile(self.root / '合集.zip','w') as zf:
-            zf.writestr('书/故事.txt','第一章 开端\n压缩包里的文字。'.encode('utf-8'))
-            zf.writestr('图/1.jpg',b'image')
-            zf.writestr('__MACOSX/._junk',b'junk')
-        self.make_epub(self.root / '春日.epub')
-        with zipfile.ZipFile(self.root / '笔记.docx','w') as zf:
-            zf.writestr('word/document.xml','<w:document xmlns:w="word"><w:body><w:p><w:r><w:t>第一段</w:t></w:r></w:p><w:p><w:r><w:t>第二段</w:t></w:r></w:p></w:body></w:document>')
-        (self.root/'sample.pdf').write_bytes(b'%PDF-1.4\nfixture')
-        self.lib = Library(self.data,str(self.root))
+        self.data=Path(self.temp.name)/'data'
+        (self.root/'未整理').mkdir()
+        (self.root/'未整理'/'《春日》作者：小林.txt').write_text('这是一本小说。',encoding='utf-8')
+        (self.root/'春日.epub').write_bytes(b'epub fixture')
+        (self.root/'sample.pdf').write_bytes(b'%PDF-1.4')
+        (self.root/'漫画').mkdir()
+        for name in ['1.jpg','2.jpg']:(self.root/'漫画'/name).write_bytes(b'image')
+        innermost=packed({'书/《夜航》作者：小舟.txt':'嵌套三层里的小说。'.encode()})
+        inner=packed({'深一层.zip':innermost,'普通故事.pdf':b'%PDF-1.4'})
+        (self.root/'合集.zip').write_bytes(packed({'第一层/第二层.zip':inner,'《故事》作者：山川.txt':'包内小说。'.encode(),'封面.jpg':b'image'}))
+        (self.root/'漫画.zip').write_bytes(packed({'1.jpg':b'image','2.jpg':b'image'}))
+        (self.root/'损坏.zip').write_bytes(b'not a zip')
+        self.lib=Library(self.data,str(self.root))
         self.scan()
 
     def tearDown(self):
+        self.tool_patch.stop()
         self.temp.cleanup()
 
-    def scan(self):
-        self.assertTrue(self.lib.start_scan())
-        deadline=time.time()+5
-        while self.lib.scan_state['running'] and time.time()<deadline:
-            time.sleep(.01)
+    def scan(self,force=False):
+        self.assertTrue(self.lib.start_scan(force))
+        deadline=time.time()+10
+        while self.lib.scan_state['running'] and time.time()<deadline:time.sleep(.01)
         self.assertFalse(self.lib.scan_state['running'])
         self.assertEqual(self.lib.scan_state['error'],'')
 
-    def book(self, ext):
-        return next(b for b in self.lib.listing({'limit':100})['items'] if b['ext']==ext)
+    def book(self,title):
+        return next(item for item in self.lib.listing({'limit':100})['items'] if item['title']==title)
 
-    @staticmethod
-    def make_epub(path):
-        with zipfile.ZipFile(path,'w') as zf:
-            zf.writestr('META-INF/container.xml','<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
-            zf.writestr('OEBPS/content.opf','<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="b" href="b.xhtml" media-type="application/xhtml+xml"/><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>')
-            zf.writestr('OEBPS/a.xhtml','<html xmlns="http://www.w3.org/1999/xhtml"><head><title>不应进入正文</title><style>hidden</style></head><body><h1>第一章</h1><p>第一部分。</p></body></html>')
-            zf.writestr('OEBPS/b.xhtml','<html><body><h1>第二章</h1><p>第二部分。</p><script>evil()</script></body></html>')
 
-class LibraryTests(LibraryFixture, unittest.TestCase):
-    def test_scan_formats_and_ignore_unfinished(self):
-        stats=self.lib.stats()
-        self.assertEqual(stats['total'],7)
-        self.assertEqual(stats['kinds']['comic'],1)
-        album=self.book('folder')
-        self.assertEqual(album['image_count'],3)
-        self.assertEqual([e['name'] for e in self.lib.album_entries(self.lib.path(self.lib.book(album['id'])))],['1.jpg','2.jpg','10.jpg'])
+class LibraryTests(LibraryFixture,unittest.TestCase):
+    def test_recursive_catalog_contains_books_and_no_placeholder_archives(self):
+        self.assertEqual(self.lib.stats()['total'],8)
+        self.assertEqual(self.lib.listing({'q':'小舟'})['items'][0]['title'],'夜航')
+        book=self.book('夜航')
+        self.assertEqual(len(json.loads(book['chain'])),3)
+        self.assertEqual(self.book('普通故事')['kind'],'pdf')
+        self.assertFalse(any(b['kind']=='archive' for b in self.lib.listing({'limit':100})['items']))
+        self.assertEqual(len(self.lib.issues()),1)
+        self.assertIn(self.lib.issues()[0]['code'],{'damaged','format','engine'})
+        self.assertNotIn('folders',self.lib.stats())
 
-    def test_search_tags_folder_and_literal_wildcards(self):
-        result=self.lib.listing({'q':'春日 小林'})
-        self.assertEqual(result['total'],1)
-        book=result['items'][0]
-        self.assertEqual(book['title'],'春日')
-        self.assertEqual(book['author'],'小林')
-        self.lib.update(book['id'],{'tags':'假期, 喜欢','favorite':True})
-        self.assertEqual(self.lib.listing({'q':'假期','view':'favorites'})['total'],1)
-        self.assertEqual(self.lib.listing({'folder':'第一组'})['total'],1)
-        self.assertEqual(self.lib.listing({'q':'%'})['total'],0)
+    def test_no_reading_metadata_or_activities(self):
+        book=self.book('故事')
+        forbidden={'favorite','status','tags','notes','progress','last_read','last_entry'}
+        self.assertFalse(forbidden.intersection(book))
+        with self.lib.db() as db:
+            fields={r['name'] for r in db.execute('PRAGMA table_info(books)')}
+            self.assertFalse(fields.intersection(forbidden))
+            self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='reading'").fetchone())
+            before=dict(db.execute('SELECT * FROM books WHERE id=?',(book['id'],)).fetchone())
+        with patch('server.os.startfile',create=True):self.lib.open_external(book['id'])
+        with self.lib.db() as db:
+            after=dict(db.execute('SELECT * FROM books WHERE id=?',(book['id'],)).fetchone())
+        self.assertEqual(before,after)
 
-    def test_decode_chapters_paging_and_reopen(self):
-        book=self.lib.listing({'q':'小林'})['items'][0]
-        first=self.lib.content(book['id'],start=0)
-        second=self.lib.content(book['id'],start=first['end'])
-        self.assertEqual(first['text']+second['text'],self.text[:second['end']])
-        self.assertEqual(len(first['chapters']),2)
-        self.lib.progress(book['id'],'',second['start'],.3)
-        resumed=self.lib.content(book['id'],start=-1)
-        self.assertEqual(resumed['start'],second['start'])
-        self.assertEqual(self.lib.book(book['id'])['status'],'reading')
-        self.assertEqual(decode_text('中文'.encode('utf-16')),'中文')
+    def test_reveal_extracts_exact_novel_and_separates_original_archive(self):
+        book=self.book('夜航')
+        original=(self.root/'合集.zip').read_bytes()
+        with patch('server.reveal_in_explorer') as reveal:
+            result=self.lib.reveal(book['id'])
+            target=Path(reveal.call_args.args[0])
+            self.assertTrue(result['extracted'])
+            self.assertTrue(target.is_relative_to(self.data/'extracted'))
+            self.assertEqual(target.name,'《夜航》作者：小舟.txt')
+            self.assertEqual(target.read_text(encoding='utf-8'),'嵌套三层里的小说。')
+            self.lib.reveal(book['id'],original=True)
+            self.assertEqual(reveal.call_args.args[0],self.root/'合集.zip')
+        self.assertEqual((self.root/'合集.zip').read_bytes(),original)
 
-    def test_archive_and_epub_and_docx(self):
-        book=self.lib.book(self.book('.zip')['id'])
-        entries=self.lib.archive_entries(self.lib.path(book))
-        self.assertEqual(len(entries),2)
-        text_entry=next(e for e in entries if e['ext']=='.txt')
-        self.assertIn('压缩包里的文字',self.lib.content(book['id'],text_entry['key'])['text'])
-        result=self.lib.content(self.book('.epub')['id'])
-        self.assertLess(result['text'].index('第一部分'),result['text'].index('第二部分'))
-        self.assertEqual(len(result['chapters']),2)
-        self.assertNotIn('hidden',result['text'])
-        self.assertNotIn('evil',result['text'])
-        self.assertNotIn('不应进入正文',result['text'])
-        self.assertIn('第一段\n第二段',self.lib.content(self.book('.docx')['id'])['text'])
-
-    def test_scanning_preserves_data_and_recovers_missing(self):
-        book=self.lib.listing({'q':'小林'})['items'][0]
-        self.lib.update(book['id'],{'favorite':True,'tags':'保留','notes':'一些想法'})
-        self.lib.progress(book['id'],'',100,.2)
+    def test_nested_cache_reused_and_source_change_refreshes(self):
+        book=self.lib.book(self.book('夜航')['id'])
+        target=self.lib.external_path(book)
+        with patch.object(self.lib.engine,'extract',side_effect=AssertionError('unnecessary extraction')):
+            self.assertEqual(self.lib.external_path(book),target)
+            with patch.object(self.lib.engine,'catalog',side_effect=AssertionError('unchanged archive scanned')):
+                self.scan()
+        with zipfile.ZipFile(self.root/'合集.zip','a') as zf:zf.writestr('新加入.txt',b'new')
         self.scan()
-        updated=self.lib.book(book['id'])
-        self.assertEqual((updated['favorite'],updated['tags'],updated['progress']),(1,'保留',.2))
-        path=self.lib.path(updated)
-        path.rename(path.with_suffix('.hidden'))
+        self.assertEqual(self.lib.stats()['total'],9)
+        self.assertEqual(self.book('新加入')['kind'],'text')
+
+    def test_archive_paths_do_not_escape_the_cache(self):
+        with zipfile.ZipFile(self.root/'合集.zip','a') as zf:zf.writestr('../../escaped.txt',b'safe')
         self.scan()
-        self.assertEqual(self.lib.listing({'q':'小林'})['total'],0)
-        path.with_suffix('.hidden').rename(path)
+        target=self.lib.external_path(self.lib.book(self.book('escaped')['id']))
+        self.assertTrue(target.is_relative_to(self.data/'extracted'))
+        self.assertFalse((self.root.parent/'escaped.txt').exists())
+
+    def test_mixed_folder_and_offline_scan(self):
+        (self.root/'未整理'/'cover.jpg').write_bytes(b'cover')
         self.scan()
-        self.assertEqual(self.lib.book(book['id'])['favorite'],1)
-        # Offline scans leave the last known library intact.
-        offline=self.root.with_name('offline')
-        self.root.rename(offline)
+        self.assertEqual(self.lib.stats()['total'],8)
+        self.assertEqual(self.lib.listing({'q':'未整理'})['total'],0)
+        offline=self.root.with_name('offline');self.root.rename(offline)
         self.lib.start_scan()
         while self.lib.scan_state['running']:time.sleep(.01)
         self.assertTrue(self.lib.scan_state['error'])
-        self.assertEqual(self.lib.stats()['total'],7)
+        self.assertEqual(self.lib.stats()['total'],8)
         offline.rename(self.root)
 
-    def test_progress_separate_archive_entries(self):
-        book=self.book('.zip')
-        self.lib.progress(book['id'],'one.txt',120,.1)
-        self.lib.progress(book['id'],'two.txt',500,.4)
+    def test_old_schema_is_compatible_but_history_is_never_used(self):
+        book=self.book('故事')
         with self.lib.db() as db:
-            rows=db.execute('SELECT entry,position FROM reading WHERE book_id=? ORDER BY entry',(book['id'],)).fetchall()
-        self.assertEqual([tuple(r) for r in rows],[('one.txt',120),('two.txt',500)])
+            db.execute("ALTER TABLE books ADD COLUMN tags TEXT DEFAULT ''")
+            db.execute("ALTER TABLE books ADD COLUMN last_read REAL DEFAULT 0")
+            db.execute('UPDATE books SET tags=?,last_read=? WHERE id=?',('旧标签',123,book['id']))
+        self.lib=Library(self.data)
+        self.scan()
+        self.assertNotIn('tags',self.lib.book(book['id']))
+        self.assertEqual(self.lib.listing({'q':'旧标签'})['total'],0)
+        with patch('server.os.startfile',create=True):self.lib.open_external(book['id'])
+        with self.lib.db() as db:self.assertEqual(db.execute('SELECT last_read FROM books WHERE id=?',(book['id'],)).fetchone()[0],123)
 
-    def test_archive_limits_and_no_traversal(self):
-        book=self.lib.book(self.book('.zip')['id'])
-        with self.assertRaises(UserError): self.lib.archive_bytes(self.lib.path(book),'../../outside.txt')
-        album=self.lib.book(self.book('folder')['id'])
-        with self.assertRaises(UserError): self.lib.raw(album,'../../outside.jpg')
+    def test_legacy_zip_utf8_filename_without_flag_is_repaired(self):
+        raw='《旧编码》作者：小舟.txt'.encode('utf-8')
+        placeholder='x'*len(raw)
+        content=packed({placeholder:b'legacy'}).replace(placeholder.encode(),raw)
+        (self.root/'旧编码.zip').write_bytes(content)
+        self.scan()
+        book=self.lib.book(self.book('旧编码')['id'])
+        self.assertEqual(book['author'],'小舟')
+        self.assertEqual(self.lib.external_path(book).read_bytes(),b'legacy')
+
+    @unittest.skipUnless(TOOL,'7-Zip required for encrypted fixtures')
+    def test_password_protected_7z_is_unpacked_after_password_setting(self):
+        source=Path(self.temp.name)/'secret.txt';source.write_bytes(b'secret book')
+        archive=self.root/'encrypted.7z'
+        subprocess.run([TOOL,'a',str(archive),str(source),'-pnovel-password','-mhe=on','-y'],check=True,capture_output=True)
+        self.scan()
+        self.assertTrue(any(i['code']=='password' for i in self.lib.issues()))
+        self.lib.settings({'passwords':['wrong','novel-password']})
+        deadline=time.time()+10
+        while self.lib.scan_state['running'] and time.time()<deadline:time.sleep(.01)
+        self.assertEqual(self.lib.scan_state['error'],'')
+        book=self.lib.book(self.book('secret')['id'])
+        self.assertEqual(self.lib.external_path(book).read_bytes(),b'secret book')
+        self.assertFalse(any(i['code']=='password' for i in self.lib.issues()))
+
+    @unittest.skipUnless(os.name=='nt','Windows Shell API')
+    def test_windows_reveal_uses_full_item_pidl_for_unicode_spaces_and_commas(self):
+        target=self.root/'含 空格,逗号.txt';target.write_text('test',encoding='utf-8')
+        shell,ole=Mock(),Mock()
+        ole.CoInitialize.return_value=0
+        def parse(name,context,pointer,attributes,out):pointer._obj.value=12345;return 0
+        shell.SHParseDisplayName.side_effect=parse
+        shell.SHOpenFolderAndSelectItems.return_value=0
+        with patch('platform_utils.ctypes.OleDLL',side_effect=[shell,ole]):reveal_in_explorer(target)
+        self.assertEqual(shell.SHParseDisplayName.call_args.args[0],str(target.resolve()))
+        self.assertEqual(shell.SHOpenFolderAndSelectItems.call_args.args[1:],(0,None,0))
+        ole.CoTaskMemFree.assert_called_once();ole.CoUninitialize.assert_called_once()
+
+    @unittest.skipUnless(TOOL,'7-Zip required for AES ZIP fixtures')
+    def test_aes_zip_member_is_automatically_unpacked(self):
+        source=Path(self.temp.name)/'AES-novel.txt';source.write_bytes(b'AES book')
+        archive=self.root/'aes.zip'
+        subprocess.run([TOOL,'a',str(archive),str(source),'-pzip-secret','-mem=AES256','-y'],check=True,capture_output=True)
+        self.lib=Library(self.data)
+        with self.lib.db() as db:db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('archive_passwords',json.dumps(['zip-secret'])))
+        self.lib.engine=ArchiveEngine(self.data,self.lib.passwords)
+        self.scan()
+        self.assertEqual(self.lib.external_path(self.lib.book(self.book('AES-novel')['id'])).read_bytes(),b'AES book')
 
 
-class HTTPTests(LibraryFixture, unittest.TestCase):
+class HTTPTests(LibraryFixture,unittest.TestCase):
     def setUp(self):
-        super().setUp()
-        self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
-        self.server.library=self.lib
-        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True)
-        self.thread.start()
+        super().setUp();self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.library=self.lib
+        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.base=f'http://127.0.0.1:{self.server.server_port}'
 
     def tearDown(self):
-        self.server.shutdown();self.server.server_close();self.thread.join()
-        super().tearDown()
+        self.server.shutdown();self.server.server_close();self.thread.join();super().tearDown()
 
-    def get(self,path,headers=None):
-        return urllib.request.urlopen(urllib.request.Request(self.base+path,headers=headers or {}))
+    def get(self,path,headers=None):return urllib.request.urlopen(urllib.request.Request(self.base+path,headers=headers or {}))
 
-    def post(self,path,data,headers=None):
-        return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json',**(headers or {})}))
+    def post(self,path,data,headers=None):return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json',**(headers or {})}))
 
-    def test_http_listing_static_ranges_and_origin(self):
-        with self.get('/') as response:
-            self.assertIn('书屿',response.read().decode())
-            self.assertIn("script-src 'self'",response.headers['Content-Security-Policy'])
-        with self.get('/api/books?q=%E6%98%A5%E6%97%A5') as response:
-            self.assertEqual(json.load(response)['total'],2)
-        book=self.book('.pdf')
-        with self.get('/api/raw?id='+book['id'],{'Range':'bytes=0-3'}) as response:
-            self.assertEqual(response.status,206)
-            self.assertEqual(response.read(),b'%PDF')
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.post('/api/update',{'id':book['id'],'favorite':True},{'Origin':'https://evil.example'})
-        self.assertEqual(ctx.exception.code,403)
-        ctx.exception.close()
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.get('/api/stats',{'Host':'evil.example'})
-        self.assertEqual(ctx.exception.code,403)
-        ctx.exception.close()
+    def test_removed_metadata_routes_and_host_origin_guards(self):
+        for route in ['/api/export','/api/content','/api/raw']:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:self.get(route)
+            self.assertEqual(ctx.exception.code,404);ctx.exception.close()
+        for route in ['/api/update','/api/import','/api/progress']:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:self.post(route,{})
+            self.assertEqual(ctx.exception.code,404);ctx.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:self.post('/api/scan',{}, {'Origin':'https://evil.example'})
+        self.assertEqual(ctx.exception.code,403);ctx.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:self.get('/api/stats',{'Host':'evil.example'})
+        self.assertEqual(ctx.exception.code,403);ctx.exception.close()
 
-    def test_http_backup_restore(self):
-        book=self.book('.epub')
-        with self.post('/api/update',{'id':book['id'],'favorite':True,'tags':'周末','notes':'想读'}):pass
-        with self.post('/api/progress',{'id':book['id'],'position':5,'progress':.25}):pass
-        with self.get('/api/export') as response:backup=json.load(response)
-        with self.post('/api/update',{'id':book['id'],'favorite':False,'tags':'修改'}):pass
-        with self.post('/api/import',{'backup':backup}) as response:self.assertEqual(json.load(response)['restored'],1)
-        self.assertEqual(self.lib.book(book['id'])['tags'],'周末')
-        self.assertEqual(self.lib.book(book['id'])['favorite'],1)
+    def test_http_reveal_and_failure_details(self):
+        book=self.book('夜航')
+        with patch('server.reveal_in_explorer') as reveal:
+            with self.post('/api/reveal',{'id':book['id']}) as response:result=json.load(response)
+            self.assertEqual(Path(result['path']).name,'《夜航》作者：小舟.txt')
+            self.assertTrue(result['extracted']);reveal.assert_called_once()
+        with self.get('/api/issues') as response:issues=json.load(response)['items']
+        self.assertEqual(len(issues),1)
+        self.assertIn('code',issues[0]);self.assertIn('message',issues[0])
+        with self.get('/api/books') as response:
+            self.assertFalse({'tags','status','last_read'}.intersection(json.load(response)['items'][0]))
 
 
-if __name__=='__main__':
-    unittest.main()
+if __name__=='__main__':unittest.main()
