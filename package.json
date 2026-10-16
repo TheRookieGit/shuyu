@@ -2,7 +2,7 @@
   "name": "shuyu-local-library",
   "private": true,
   "scripts": {
-    "test": "python -m unittest discover -s tests -v && node --check web/app.js && node tests/frontend.cjs"
+    "test": "python -m unittest discover -s tests -v && node --check web/app.js && node --check web/ai.js && node tests/frontend.cjs"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

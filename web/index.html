@@ -9,6 +9,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script defer src="/app.js"></script>
+  <script defer src="/ai.js"></script>
 </head>
 <body>
   <div class="catalog-shell">
@@ -35,9 +36,36 @@
   <dialog id="settings-dialog" class="settings-dialog">
     <div class="dialog-heading"><div><div class="eyebrow">YOUR LOCAL LIBRARY</div><h2>书库设置</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="关闭">×</button></div>
     <form id="settings-form"><label class="field-label" for="root-input">书库位置</label><input id="root-input" class="full-input" required placeholder="例如 Z:\老婆小说漫画"><p class="field-help">包含所有子目录，压缩包会自动逐层处理。原文件保持原样。</p><label class="field-label" for="password-input">解压密码（加密压缩包才需要）</label><textarea id="password-input" rows="3" placeholder="有通用密码时可填写，每行一个。留空保持现有设置。" autocomplete="off" spellcheck="false"></textarea><p id="password-help" class="field-help">程序会自动尝试这些密码，无需手动解压。密码仅保存在本机。</p><button class="button primary" type="submit">保存并自动扫描</button></form>
-    <div class="settings-divider"></div><div class="format-help"><span data-icon="info"></span><p>只建立小说目录，不记录阅读历史、状态、收藏、标签或笔记。打开和定位包内小说时，会自动取出选中的文件；「定位原压缩包」可查看原始来源。</p></div>
+    <div class="settings-divider"></div><button id="ai-settings-button" class="button secondary" type="button">Claude AI 设置</button><p class="field-help">Haiku 5.5 · 生成清理建议，确认后另存为同一本书的新版本。</p>
+    <div class="format-help"><span data-icon="info"></span><p>只建立小说目录，不记录阅读历史、状态、收藏、标签或笔记。打开和定位包内小说时，会自动取出选中的文件；「定位原压缩包」可查看原始来源。</p></div>
   </dialog>
   <dialog id="issues-dialog" class="settings-dialog issues-dialog"><div class="dialog-heading"><div><div class="eyebrow">ARCHIVE PROCESSING</div><h2>压缩包处理结果</h2></div><button class="icon-button" data-close="issues-dialog" aria-label="关闭">×</button></div><p class="field-help">正常的压缩包会自动展开，下面只列出无法完成的具体原因。</p><div id="issue-list"></div><div class="button-row"><button class="button secondary" id="retry-archives">自动重试</button><button class="button primary" id="archive-password-settings">填写解压密码</button></div></dialog>
+  <dialog id="ai-settings-dialog" class="settings-dialog">
+    <div class="dialog-heading"><div><div class="eyebrow">CLAUDE AI</div><h2>AI 清理设置</h2></div><button class="icon-button" data-close="ai-settings-dialog" aria-label="关闭">×</button></div>
+    <form id="ai-settings-form">
+      <label class="field-label" for="ai-model">模型</label><input id="ai-model" class="full-input" value="claude-haiku-5-5" readonly>
+      <label class="field-label" for="ai-url">API 地址</label><input id="ai-url" class="full-input" type="url" required value="https://api.anthropic.com/v1">
+      <label class="field-label" for="ai-key">API Key</label><input id="ai-key" class="full-input" type="password" autocomplete="new-password" spellcheck="false"><p id="ai-key-help" class="field-help"></p>
+      <label class="check-line"><input id="ai-clear-key" type="checkbox">清除已保存的 Key</label>
+      <p class="field-help">开始检查时，所选小说片段会发送到上面的接口，并产生 API 用量。Windows 使用当前用户的系统加密保护已保存的 Key。</p>
+      <div class="button-row"><button class="button primary" type="submit">保存设置</button><button id="ai-test" class="button secondary" type="button">保存并测试连接</button></div><p id="ai-test-result" class="field-help" role="status"></p>
+    </form>
+  </dialog>
+  <dialog id="clean-dialog" class="clean-dialog">
+    <div class="dialog-heading"><div><div class="eyebrow">REVIEW BEFORE SAVING</div><h2 id="clean-title">AI 清理</h2></div><button class="icon-button" data-close="clean-dialog" aria-label="关闭">×</button></div>
+    <p class="clean-promise">原文件始终保留。每次保存都会另建版本，收在同一本书里。</p>
+    <p id="clean-operation-error" class="notice" role="alert" hidden></p>
+    <form id="clean-options"><div class="clean-categories"><label class="check-line"><input name="category" type="checkbox" value="author_note" checked>作者有话说 / 广告</label><label class="check-line"><input name="category" type="checkbox" value="garbled" checked>乱码修复</label><label class="check-line"><input name="category" type="checkbox" value="censored" checked>屏蔽字推测</label></div>
+      <div class="clean-options-row"><label>检查方式<select id="clean-mode"><option value="focused">优先检查疑似片段（较省用量）</option><option value="full">逐段检查全文（用量较大）</option></select></label><label>文本编码<select id="clean-encoding"><option value="auto">自动识别</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="big5">Big5</option><option value="utf-16">UTF-16</option></select></label></div>
+      <p class="field-help">疑似片段检查可能漏掉没有明显标记的内容。屏蔽字是上下文推测，不能保证原文；乱码和屏蔽字建议默认不勾选。EPUB 会保留电子书结构。</p><button class="button primary" type="submit">生成本地检查计划</button>
+    </form>
+    <section id="clean-review" hidden><p id="clean-summary" class="field-help"></p><progress id="clean-progress" max="1" value="0"></progress><p id="clean-status" role="status"></p><p id="clean-error" class="notice" hidden></p>
+      <div class="button-row"><button id="clean-start" class="button primary">发送片段给 Claude，开始检查</button><button id="clean-stop" class="button secondary" hidden>停止后续请求</button><button id="clean-api-settings" class="text-button">Claude AI 设置</button></div>
+      <p class="field-help">停止会等待当前请求结束，已完成的建议会保留。关闭窗口后任务仍会继续，可从书目详情返回。</p>
+      <div id="clean-patches"></div><div id="clean-pages" class="pagination"></div>
+      <div id="clean-save-panel" hidden><div class="button-row"><button id="clean-none" class="text-button">全部取消选择</button><span id="clean-selection" class="field-help"></span></div><label class="field-label" for="clean-label">新版本名称（可选）</label><input id="clean-label" class="full-input" maxlength="80" placeholder="例如：去作者话 · 保留屏蔽字"><button id="clean-save" class="button primary">另存为新版本</button></div>
+    </section>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

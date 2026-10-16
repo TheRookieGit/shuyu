@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
 from platform_utils import reveal_in_explorer
+from ai_cleaner import Cleaner, CleanError
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -64,6 +65,12 @@ class Library:
               container TEXT NOT NULL DEFAULT '',entry TEXT NOT NULL DEFAULT '',chain TEXT NOT NULL DEFAULT '[]',
               UNIQUE(root,rel));
             CREATE INDEX IF NOT EXISTS books_root ON books(root,missing);
+            CREATE TABLE IF NOT EXISTS book_versions (
+              id TEXT PRIMARY KEY,book_id TEXT NOT NULL,number INTEGER NOT NULL,label TEXT NOT NULL,
+              path TEXT NOT NULL,ext TEXT NOT NULL,size INTEGER NOT NULL,created REAL NOT NULL,
+              parent_id TEXT NOT NULL,edit_count INTEGER NOT NULL,model TEXT NOT NULL,
+              UNIQUE(book_id,number));
+            CREATE INDEX IF NOT EXISTS versions_book ON book_versions(book_id);
             CREATE TABLE IF NOT EXISTS archive_catalog (
               root TEXT NOT NULL,rel TEXT NOT NULL,mtime_ns INTEGER NOT NULL,size INTEGER NOT NULL,
               revision TEXT NOT NULL,manifest TEXT NOT NULL,issues TEXT NOT NULL,seen TEXT NOT NULL,
@@ -79,6 +86,7 @@ class Library:
             elif not db.execute("SELECT 1 FROM settings WHERE key='root'").fetchone():
                 db.execute('INSERT INTO settings VALUES (?,?)',('root',DEFAULT_ROOT))
         self.engine = ArchiveEngine(self.data_dir,self.passwords)
+        self.cleaner = Cleaner(self)
 
     @contextmanager
     def db(self):
@@ -186,6 +194,7 @@ class Library:
             for current,dirs,files in os.walk(root,followlinks=False,onerror=errors.append):
                 dirs[:] = [name for name in dirs if not name.startswith('.') and name not in {'__MACOSX','$RECYCLE.BIN'}
                            and not (Path(current)/name).is_symlink()
+                           and not (Path(current)/name).resolve().is_relative_to(self.data_dir)
                            and not getattr(Path(current)/name,'is_junction',lambda:False)()]
                 images,has_books = [],False
                 for name in files:
@@ -242,7 +251,32 @@ class Library:
             raise UserError('没有找到这本小说，请重新扫描。')
         book = dict(row)
         book['path'] = str(Path(book['root'])/(book['container'] or book['rel']))
+        book['versions'] = self.versions(uid)
+        book['version_count'] = 1+len(book['versions'])
         return book
+
+    def versions(self,uid):
+        with self.db() as db:
+            return [dict(row) for row in db.execute('SELECT id,number,label,ext,size,created,parent_id,edit_count,model FROM book_versions WHERE book_id=? ORDER BY number DESC',(uid,))]
+
+    def version_path(self,book,version_id=''):
+        if not version_id:return self.external_path(book)
+        with self.db() as db:
+            row=db.execute('SELECT path FROM book_versions WHERE id=? AND book_id=?',(version_id,book['id'])).fetchone()
+        if not row:raise UserError('这个版本不属于当前书目。')
+        path=(self.data_dir/row['path']).resolve()
+        if not path.is_relative_to(self.data_dir/'versions'/book['id']) or not path.is_file():
+            raise UserError('版本文件不存在或无法访问。')
+        return path
+
+    def add_version(self,book,uid,path,parent_id,edit_count,model,label=''):
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            number=db.execute('SELECT coalesce(max(number),0)+1 FROM book_versions WHERE book_id=?',(book['id'],)).fetchone()[0]
+            label=re.sub(r'[\x00-\x1f]','',label.strip())[:80] or f'AI 清理版 {number}'
+            db.execute('INSERT INTO book_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (uid,book['id'],number,label,path.relative_to(self.data_dir).as_posix(),path.suffix.lower(),path.stat().st_size,time.time(),parent_id,edit_count,model))
+        return next(v for v in self.versions(book['id']) if v['id']==uid)|{'book_id':book['id']}
 
     def path(self,book):
         path = Path(book['path']).resolve()
@@ -265,7 +299,7 @@ class Library:
         clause = ' AND '.join(where)
         with self.db() as db:
             total = db.execute('SELECT count(*) FROM books WHERE '+clause,params).fetchone()[0]
-            rows = db.execute(f'SELECT {CATALOG_FIELDS} FROM books WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
+            rows = db.execute(f'SELECT {CATALOG_FIELDS},(SELECT count(*)+1 FROM book_versions WHERE book_id=books.id) AS version_count FROM books WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
         return {'items':[dict(row) for row in rows],'total':total,'page':page,'pages':(total+limit-1)//limit}
 
     def issues(self):
@@ -285,9 +319,9 @@ class Library:
         chain = source_chain(book)
         return self.engine.materialize(path,chain,book['name']) if chain else path
 
-    def open_external(self,uid):
+    def open_external(self,uid,version_id=''):
         book = self.book(uid)
-        path = self.external_path(book)
+        path = self.version_path(book,version_id)
         if not path.is_dir() and path.suffix.lower() not in BOOKS:
             raise UserError('此文件不支持使用系统应用打开。')
         if os.name=='nt':
@@ -295,13 +329,15 @@ class Library:
         else:
             subprocess.Popen(['open' if __import__('sys').platform=='darwin' else 'xdg-open',str(path)])
 
-    def reveal(self,uid,original=False):
+    def reveal(self,uid,original=False,version_id=''):
         book = self.book(uid)
-        path = self.path(book) if original else self.external_path(book)
+        path = self.path(book) if original else self.version_path(book,version_id)
         reveal_in_explorer(path)
-        return {'ok':True,'path':str(path),'extracted':bool(source_chain(book)) and not original}
+        return {'ok':True,'path':str(path),'extracted':bool(source_chain(book)) and not original and not version_id}
 
     def settings(self,data):
+        if self.cleaner.active:
+            raise UserError('AI 任务正在处理，请完成或停止后再切换书库。')
         if self.scan_state['running']:
             raise UserError('扫描正在进行，请完成后再修改设置。')
         root = Path(str(data.get('root',self.root))).expanduser().resolve()
@@ -354,14 +390,16 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/books':return self.json(self.lib.listing(query))
             if url.path=='/api/book':return self.json(self.lib.book(query['id']))
             if url.path=='/api/issues':return self.json({'items':self.lib.issues()})
-            static={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+            if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config())
+            if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
+            static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
             if url.path in static:
                 path = BASE/'web'/static[url.path]
                 return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
                     {'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'none'; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
-        except (UserError,ArchiveError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc)},400)
+        except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc)},400)
 
     def do_POST(self):
         if not self.allowed():return self.json({'error':'Invalid host'},403)
@@ -374,17 +412,23 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length','0'))
             if not 0<length<=1024*1024:raise UserError('无效的请求长度。')
             data = json.loads(self.rfile.read(length))
+            if self.path=='/api/ai/config':return self.json(self.lib.cleaner.configure(data))
+            if self.path=='/api/ai/test':return self.json(self.lib.cleaner.test_connection())
+            if self.path=='/api/clean/prepare':return self.json(self.lib.cleaner.prepare(data))
+            if self.path=='/api/clean/start':return self.json(self.lib.cleaner.start(data['job_id']))
+            if self.path=='/api/clean/cancel':return self.json(self.lib.cleaner.cancel(data['job_id']))
+            if self.path=='/api/clean/save':return self.json(self.lib.cleaner.save(data))
             if self.path=='/api/scan':return self.json({'started':self.lib.start_scan(force=True)})
             if self.path=='/api/settings':
                 self.lib.settings(data)
                 return self.json({'ok':True})
-            if self.path=='/api/reveal':return self.json(self.lib.reveal(data['id'],bool(data.get('original'))))
+            if self.path=='/api/reveal':return self.json(self.lib.reveal(data['id'],bool(data.get('original')),str(data.get('version_id',''))))
             if self.path=='/api/open':
-                self.lib.open_external(data['id'])
+                self.lib.open_external(data['id'],str(data.get('version_id','')))
                 return self.json({'ok':True})
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
-        except (UserError,ArchiveError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc)},400)
+        except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc)},400)
 
 
 def main():
