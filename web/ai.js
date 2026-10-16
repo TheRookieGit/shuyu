@@ -2,18 +2,26 @@
 const cleaning={book:null,version:'',job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,generation:0,renderKey:''};
 const categoryNames={author_note:'作者话 / 广告',garbled:'乱码修复',censored:'屏蔽字推测'};
 async function aiSettings(){
-  try{const config=await api('/api/ai/config');$('#ai-url').value=config.base_url;$('#ai-model').value=config.model;$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent=config.key_set?'Key 已配置；留空保持不变。':'请填写 Claude API Key，只保存在本机。';$('#ai-test-result').textContent='';if(!$('#ai-settings-dialog').open)$('#ai-settings-dialog').showModal();}catch(error){onError(error);}
+  try{const config=await api('/api/ai/config');$('#ai-transport').value=config.transport;$('#ai-terminal-path').value=config.terminal_path;$('#ai-url').value=config.base_url;$('#ai-model').value=config.model;$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent=config.key_set?'Key 已配置；留空保持不变。':'请填写 Claude API Key，只保存在本机。';$('#ai-test-result').textContent='';$('#ai-terminal-status').textContent='可检测本机安装和订阅登录状态，检测本身不发送小说内容。';showAITransport();if(!$('#ai-settings-dialog').open)$('#ai-settings-dialog').showModal();}catch(error){onError(error);}
 }
 $('#ai-settings-button').onclick=aiSettings;$('#clean-api-settings').onclick=aiSettings;
-async function saveAI(test=false){
+function showAITransport(){const terminal=$('#ai-transport').value==='terminal';$('#ai-api-fields').hidden=terminal;$('#ai-terminal-fields').hidden=!terminal;$$('input', $('#ai-api-fields')).forEach(el=>el.disabled=terminal);$('#ai-test-result').textContent='';}
+$('#ai-transport').onchange=showAITransport;
+async function saveAI(action='save'){
   const buttons=$$('#ai-settings-form button');buttons.forEach(b=>b.disabled=true);
   try{
-    await api('/api/ai/config',{base_url:$('#ai-url').value,api_key:$('#ai-key').value,clear_key:$('#ai-clear-key').checked});$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent='设置已保存；Key 留空保持不变。';
-    if(test){$('#ai-test-result').textContent='正在使用一条测试文字连接接口…';const result=await api('/api/ai/test',{});$('#ai-test-result').textContent=`连接成功 · ${result.model}`;}else{$('#ai-settings-dialog').close();toast('Claude 设置已保存');}
+    const data={transport:$('#ai-transport').value,terminal_path:$('#ai-terminal-path').value};
+    if(data.transport==='api')Object.assign(data,{base_url:$('#ai-url').value,api_key:$('#ai-key').value,clear_key:$('#ai-clear-key').checked});
+    await api('/api/ai/config',data);$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent='设置已保存；Key 留空保持不变。';
+    if(action==='status'){
+      $('#ai-terminal-status').textContent='正在检测 Claude 安装与订阅登录…';const result=await api('/api/ai/terminal');$('#ai-terminal-status').textContent=result.message+(result.path?' 程序位置：'+result.path:'');
+    }else if(action==='test'){
+      $('#ai-test-result').textContent='正在使用一条测试文字连接 Claude…';const result=await api('/api/ai/test',{});$('#ai-test-result').textContent=`连接成功 · ${result.model} · ${result.transport==='terminal'?'本机命令行 / 订阅登录':'API'}`;
+    }else{$('#ai-settings-dialog').close();toast('Claude 设置已保存');}
     if(cleaning.job)await refreshClean();
   }catch(error){$('#ai-test-result').textContent=error.message;onError(error);}finally{buttons.forEach(b=>b.disabled=false);}
 }
-$('#ai-settings-form').onsubmit=event=>{event.preventDefault();saveAI();};$('#ai-test').onclick=()=>saveAI(true);
+$('#ai-settings-form').onsubmit=event=>{event.preventDefault();saveAI();};$('#ai-test').onclick=()=>saveAI('test');$('#ai-terminal-check').onclick=()=>saveAI('status');
 function showClean(){if(!$('#clean-dialog').open)$('#clean-dialog').showModal();}
 function cleanError(error){$('#clean-operation-error').textContent=error.message;$('#clean-operation-error').hidden=false;onError(error);}
 function openCleanup(book,version=''){
@@ -32,12 +40,14 @@ function renderClean(job){
   cleaning.job=job;$('#clean-title').textContent=`清理《${job.title}》`;
   if($('#detail-content').dataset.bookId===job.book_id&&$('#resume-clean')){$('#resume-clean').hidden=false;$('#resume-clean').onclick=()=>resumeCleanup(job.id);}
   job.defaults.forEach(id=>{if(!cleaning.seenDefaults.has(id)){cleaning.selected.add(id);cleaning.seenDefaults.add(id);}});
-  $('#clean-summary').textContent=`${job.model} · 正文 ${number(job.characters)} 字 · ${number(job.chunks)} 个片段，含上下文约 ${number(job.send_characters)} 字 · 编码 ${job.encoding}。发送到 ${job.destination}`;
+  const terminal=job.transport==='terminal';
+  $('#clean-summary').textContent=`${job.model} · ${terminal?'本机命令行 / 订阅登录':'API'} · 正文 ${number(job.characters)} 字 · ${number(job.chunks)} 个片段，含上下文约 ${number(job.send_characters)} 字 · 编码 ${job.encoding}。${terminal?'通过本机 Claude Code 发送到 Claude 服务，占用订阅额度。':'发送到 '+job.destination}`;
   const status={prepared:'本地计划已就绪；尚未发送小说内容。',running:'Claude 正在检查…',ready:job.chunks?'检查完成，请逐项确认建议。':'没有发现明显标记；可以关闭，或新建任务选择全文检查。',paused:'已停止后续请求，可继续检查或采用已有建议。',failed:'检查中断，可重试当前片段或采用已有建议。'};
-  $('#clean-status').textContent=`${status[job.status]||job.status} ${job.progress} / ${job.chunks} · ${job.patch_total} 项建议${!job.key_set&&job.chunks?' · 请先在 Claude AI 设置中填写 API Key。':''}${job.rejected?` · ${job.rejected} 项无效或重叠建议已排除`:''}${job.usage.input_tokens?` · 用量 ${number(job.usage.input_tokens)} 输入 / ${number(job.usage.output_tokens)} 输出 tokens`:''}`;
+  const inputTokens=(job.usage.input_tokens||0)+(job.usage.cache_creation_input_tokens||0)+(job.usage.cache_read_input_tokens||0);
+  $('#clean-status').textContent=`${status[job.status]||job.status} ${job.progress} / ${job.chunks} · ${job.patch_total} 项建议${!job.can_start&&job.chunks?(terminal?' · 请先安装或指定 Claude Code。':' · 请先在 Claude AI 设置中填写 API Key。'):''}${job.rejected?` · ${job.rejected} 项无效或重叠建议已排除`:''}${inputTokens?` · 用量 ${number(inputTokens)} 输入 / ${number(job.usage.output_tokens)} 输出 tokens`:''}`;
   $('#clean-progress').max=Math.max(1,job.chunks);$('#clean-progress').value=job.progress;
   $('#clean-error').hidden=!job.error;$('#clean-error').textContent=job.error;
-  $('#clean-start').hidden=['running','ready'].includes(job.status);$('#clean-start').disabled=!job.key_set&&job.chunks>0;$('#clean-start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?'发送片段给 Claude，开始检查':'继续发送未完成片段';
+  $('#clean-start').hidden=['running','ready'].includes(job.status);$('#clean-start').disabled=!job.can_start&&job.chunks>0;$('#clean-start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?(terminal?'使用本机 Claude 订阅开始检查':'发送片段给 Claude，开始检查'):'继续发送未完成片段';
   $('#clean-stop').hidden=job.status!=='running';$('#clean-stop').disabled=job.cancel;$('#clean-stop').textContent=job.cancel?'等待当前请求结束…':'停止后续请求';
   $('#clean-save-panel').hidden=!['ready','paused','failed'].includes(job.status);
   const renderKey=JSON.stringify([job.id,job.page,job.patch_total,job.status]);
@@ -54,7 +64,7 @@ async function refreshClean(){
 }
 async function cleanAction(action){
   const button=$('#clean-'+action);button.disabled=true;$('#clean-operation-error').hidden=true;
-  try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:cleaning.job.id});await refreshClean();}catch(error){cleanError(error);}finally{button.disabled=action==='stop'?!!cleaning.job?.cancel:!cleaning.job?.key_set&&cleaning.job?.chunks>0;}
+  try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:cleaning.job.id});await refreshClean();}catch(error){cleanError(error);}finally{button.disabled=action==='stop'?!!cleaning.job?.cancel:!cleaning.job?.can_start&&cleaning.job?.chunks>0;}
 }
 $('#clean-start').onclick=()=>cleanAction('start');$('#clean-stop').onclick=()=>cleanAction('stop');
 $('#clean-patches').onchange=event=>{const id=event.target.dataset.patch;if(!id)return;if(event.target.checked)cleaning.selected.add(id);else cleaning.selected.delete(id);selectionCount();};

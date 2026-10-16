@@ -280,8 +280,13 @@ class Cleaner:
     def config(self):
         with self.lib.db() as db:row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
         values=json.loads(row[0]) if row else {}
-        return {'base_url':values.get('base_url','https://api.anthropic.com/v1'),'model':MODEL,
-                'key_set':bool(values.get('secret') or os.environ.get('ANTHROPIC_API_KEY'))}
+        transport=values.get('transport','api')
+        from claude_terminal import find_command
+        installed=bool(find_command(values.get('terminal_path',''))) if transport=='terminal' else False
+        key_set=bool(values.get('secret') or os.environ.get('ANTHROPIC_API_KEY'))
+        return {'base_url':values.get('base_url','https://api.anthropic.com/v1'),'model':MODEL,'transport':transport,
+                'terminal_path':values.get('terminal_path',''),'terminal_found':installed,
+                'key_set':key_set,'can_start':installed if transport=='terminal' else key_set}
 
     def key(self):
         with self.lib.db() as db:row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
@@ -291,7 +296,12 @@ class Cleaner:
     def configure(self,data):
         with self.lock:
             if self.active:raise CleanError('AI 正在处理，请完成或停止任务后修改接口设置。')
-            base=str(data.get('base_url','https://api.anthropic.com/v1')).strip().rstrip('/')
+            previous=self.config()
+            transport=data.get('transport',previous['transport'])
+            if transport not in {'api','terminal'}:raise CleanError('请选择 API 或本机命令行。')
+            terminal_path=str(data.get('terminal_path',previous['terminal_path'])).strip()
+            if len(terminal_path)>2048 or any(c in terminal_path for c in '\r\n\x00'):raise CleanError('请输入 Claude 可执行文件路径，不包含命令参数。')
+            base=str(data.get('base_url',previous['base_url'])).strip().rstrip('/')
             parsed=urllib.parse.urlsplit(base)
             if parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.hostname:
                 raise CleanError('请输入有效的 Claude API 地址。')
@@ -301,7 +311,7 @@ class Cleaner:
             with self.lib.db() as db:
                 row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
                 values=json.loads(row[0]) if row else {}
-                values['base_url']=base
+                values.update(base_url=base,transport=transport,terminal_path=terminal_path)
                 if data.get('clear_key'):values.pop('secret',None)
                 if data.get('api_key'):
                     value=str(data['api_key']).strip()
@@ -310,10 +320,21 @@ class Cleaner:
                 db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('claude_config',json.dumps(values)))
         return self.config()
 
+    def terminal_status(self):
+        from claude_terminal import ClaudeTerminal
+        return ClaudeTerminal(self.config(),self.lib.data_dir/'terminal').status()
+
+    def client(self):
+        config=self.config()
+        if config['transport']=='terminal':
+            from claude_terminal import ClaudeTerminal
+            return ClaudeTerminal(config,self.lib.data_dir/'terminal')
+        return ClaudeClient(config,self.key())
+
     def test_connection(self):
-        result,usage=ClaudeClient(self.config(),self.key()).analyze('这是一条连接测试，不需要修改。',categories=['author_note'])
+        result,usage=self.client().analyze('这是一条连接测试，不需要修改。',categories=['author_note'])
         if not isinstance(result.get('edits'),list):raise CleanError('接口没有返回预期结构。')
-        return {'ok':True,'model':MODEL,'usage':usage}
+        return {'ok':True,'model':MODEL,'usage':usage,'transport':self.config()['transport']}
 
     def _persist(self,job):
         directory=self.directory/job['id'];directory.mkdir(parents=True,exist_ok=True)
@@ -356,7 +377,10 @@ class Cleaner:
             job=self._job(uid)
             if self.active:raise CleanError('已有 AI 清理任务正在运行，请先完成或停止。')
             if job['status']=='ready':return self.public(uid)
-            if job['chunks'] and not self.config()['key_set']:raise CleanError('请先填写 Claude API Key，再开始 AI 检查。')
+            config=self.config()
+            if job['chunks']:
+                if config['transport']=='terminal':self.client().require_subscription()
+                elif not config['key_set']:raise CleanError('请先填写 Claude API Key，再开始 AI 检查。')
             job.update(status='running',cancel=False,error='');self.active=uid;self._persist(job)
             threading.Thread(target=self._run,args=(uid,),daemon=True,name='claude-cleaner').start()
         return self.public(uid)
@@ -364,7 +388,7 @@ class Cleaner:
     def _run(self,uid):
         job=self._job(uid)
         try:
-            doc=self._document(job);client=ClaudeClient(self.config(),self.key())
+            doc=self._document(job);client=self.client()
             while job['progress']<len(job['chunks']):
                 if job['cancel']:break
                 chunk=job['chunks'][job['progress']];start,end=chunk['start'],chunk['end']
@@ -391,10 +415,12 @@ class Cleaner:
     def public(self,uid,page=1):
         with self.lock:
             job=self._job(uid);page=max(1,int(page));patches=sorted(job['patches'],key=lambda p:p['start']);limit=12
+            config=self.config()
             return {k:job[k] for k in ('id','book_id','title','base_version','status','encoding','progress','error','rejected','characters','send_characters','model','usage','cancel')}|{
                 'chunks':len(job['chunks']),'patch_total':len(patches),'patches':patches[(page-1)*limit:page*limit],
                 'defaults':[p['id'] for p in patches if p['selected']],'page':page,'pages':(len(patches)+limit-1)//limit,
-                'destination':self.config()['base_url'],'key_set':self.config()['key_set']}
+                'destination':'本机 Claude Code → Claude 订阅' if config['transport']=='terminal' else config['base_url'],
+                'key_set':config['key_set'],'can_start':config['can_start'],'transport':config['transport']}
 
     def save(self,data):
         with self.lock:

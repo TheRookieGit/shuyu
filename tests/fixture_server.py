@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.test_library import LibraryTests
 from server import Handler, ThreadingHTTPServer
 from ai_cleaner import ClaudeClient
+from claude_terminal import ClaudeTerminal
 
 case=LibraryTests()
 case.setUp()
@@ -20,8 +21,13 @@ def synthetic_provider(segment,*args,**kwargs):
     for before,after,category in [('作者有话说：谢谢支持！','','author_note'),('图□馆','图书馆','censored')]:
         if before in segment:edits.append(dict(before=before,after=after,category=category,confidence=.98,reason='合成测试建议'))
     return {'edits':edits},{'input_tokens':123,'output_tokens':45}
-provider=patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider)
-provider.start()
+providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
+    patch.object(ClaudeTerminal,'analyze',side_effect=synthetic_provider),
+    patch.object(ClaudeTerminal,'status',return_value={'installed':True,'path':'synthetic-claude.exe',
+        'logged_in':True,'auth_method':'claude.ai','subscription_type':'pro','ready':True,'message':'已登录 Claude Pro 订阅。'}),
+    patch('claude_terminal.find_command',return_value=['synthetic-claude.exe']),
+    patch.dict('os.environ',{'ANTHROPIC_API_KEY':''})]
+for provider in providers:provider.start()
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 server.library=case.lib
 def shutdown_on_stdin():
@@ -35,5 +41,5 @@ except KeyboardInterrupt:
     pass
 finally:
     server.server_close()
-    provider.stop()
+    for provider in reversed(providers):provider.stop()
     case.tearDown()

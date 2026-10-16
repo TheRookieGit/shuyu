@@ -391,6 +391,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/book':return self.json(self.lib.book(query['id']))
             if url.path=='/api/issues':return self.json({'items':self.lib.issues()})
             if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config())
+            if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status())
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
             static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
             if url.path in static:
