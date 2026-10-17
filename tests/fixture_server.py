@@ -14,6 +14,8 @@ case.setUp()
 # Synthetic source and provider: UI tests exercise the real job/version HTTP routes,
 # without sending any text to a remote service or touching the user's library.
 (case.root/'未整理'/'《春日》作者：小林.txt').write_text('第一章 回家\n她走进图□馆。\n作者有话说：谢谢支持！\n第二章 出发\n故事继续。',encoding='utf-8')
+(case.root/'重复来源').mkdir()
+(case.root/'重复来源'/'《夜航》作者：小舟【完结】.txt').write_text('短副本',encoding='utf-8')
 case.scan()
 case.lib.cleaner.configure({'api_key':'synthetic-ui-key'})
 def synthetic_provider(segment,*args,**kwargs):

@@ -22,7 +22,7 @@ def main():
     bg_pairings={'1v1':0,'np':0,'待确认':0};tag_counts={tag:0 for tag in TAGS}
     with lib.db() as db,(directory/'分类清单.csv').open('w',encoding='utf-8-sig',newline='') as stream:
         writer=csv.writer(stream);writer.writerow(['ID','书名','作者','分类组合','第一分类','第二分类','BG子类','tag','字数','分类状态','人工核验','读取限制','原始位置'])
-        for row in db.execute("SELECT b.id,b.title,b.author,b.rel,c.level,c.relationship,c.pairing,c.tags,c.status,c.reviewed,m.word_count,m.error FROM books b LEFT JOIN book_classification c ON c.book_id=b.id LEFT JOIN book_text_metrics m ON m.book_id=b.id AND m.version_id='' WHERE b.root=? AND b.missing=0 AND b.kind<>'archive' ORDER BY b.title",(lib.root,)):
+        for row in db.execute("SELECT b.id,b.title,b.author,b.rel,c.level,c.relationship,c.pairing,c.tags,c.status,c.reviewed,m.word_count,m.error FROM books b LEFT JOIN book_classification c ON c.book_id=b.id LEFT JOIN book_text_metrics m ON m.book_id=b.id AND m.version_id='' WHERE b.root=? AND b.missing=0 AND b.kind<>'archive' AND "+lib.organizer.visible_sql('b')+" ORDER BY b.title",(lib.root,)):
             value=dict(row);value['tags']=json.loads(value['tags'] or '[]');total+=1;reviewed+=bool(value['reviewed'])
             level=value['level'] or '待确认';relation=value['relationship'] or '待确认';levels[level]=levels.get(level,0)+1;relations[relation]=relations.get(relation,0)+1
             if relation=='BG':bg_pairings[value['pairing'] or '待确认']+=1
@@ -32,6 +32,7 @@ def main():
     report={'total':total,'word_counted':summary['counted'],'not_counted':total-summary['counted'],'statuses':summary['statuses'],
             'levels':levels,'relationships':relations,'bg_pairings':bg_pairings,'tags':tag_counts,'manually_reviewed_records':reviewed,'read_limits':errors,
             'claude_used_for_initial_pass':False,'count_basis':summary['count_basis']}
+    stats=lib.stats();report.update(source_records=stats['sources'],merged_sources=stats['merged'])
     (directory/'report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     lines=['# 首次小说整理报告','',f'- 书库记录：{total:,} 条。',f'- 已取得文件字数：{summary["counted"]:,} 条；暂不能可靠统计：{total-summary["counted"]:,} 条。',
         f'- 初筛分级与关系字段已填齐：{summary["statuses"].get("classified",0):,} 条。',f'- 尚有字段待确认或标记冲突：{total-summary["statuses"].get("classified",0):,} 条。',f'- 人工核验并保护的记录：{reviewed:,} 条。','',

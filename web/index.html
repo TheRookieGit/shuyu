@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#33594b">
-  <meta name="description" content="自动找到目录和压缩包里的小说。搜索、打开、定位，仅此而已。">
-  <title>书屿 · 我的小说</title>
+  <meta name="description" content="自动找到目录和压缩包里的小说。爱妻的书屿：分类、去重、统计字数，保留每个故事。">
+  <title>爱妻的书屿 · 我的小说</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script defer src="/app.js"></script>
@@ -15,24 +15,27 @@
 <body>
   <div class="catalog-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="书屿首页"><img src="/favicon.svg" alt=""><span>书屿<small>你的小说，都在这里</small></span></a>
+      <a class="brand" href="/" aria-label="爱妻的书屿首页"><img src="/favicon.svg" alt=""><span>爱妻的书屿<small>你的小说，都在这里</small></span></a>
       <div class="top-actions"><button id="issues-button" class="text-button" hidden></button><button id="scan-button" class="button secondary"><span data-icon="refresh"></span><span>扫描书库</span></button><button id="settings-button" class="icon-button" aria-label="书库设置" title="书库设置"><span data-icon="settings"></span></button></div>
     </header>
     <main id="library-main">
-      <section class="page-heading"><div><div class="eyebrow">ALL YOUR STORIES, IN ONE PLACE</div><h1>我的小说<span>。</span></h1><p>自动找到所有子目录和压缩包里的小说。</p></div><div class="heading-stamp"><span data-icon="library"></span><span>只管找书<br>整理交给书屿</span></div></section>
+      <section class="page-heading"><div><div class="eyebrow">ALL YOUR STORIES, IN ONE PLACE</div><h1>我的小说<span>。</span></h1><p>自动找到所有子目录和压缩包里的小说。</p></div><div class="heading-stamp"><span data-icon="library"></span><span>只管找书<br>整理交给爱妻的书屿</span></div></section>
       <section class="overview catalog-overview" aria-label="书库概况"><div class="stat-item"><div class="stat-icon" data-icon="library"></div><div><span>书架上的故事</span><strong id="stat-total">—<small>本</small></strong></div></div><span class="catalog-summary" id="catalog-summary">正在连接书库…</span><div class="scan-summary"><span class="scan-dot" id="scan-dot"></span><div><strong id="scan-label">正在连接书库</strong><small id="scan-time">新增小说会自动出现在这里</small></div></div></section>
       <section class="shelf-section">
-        <div class="shelf-heading"><div><h2>全部小说</h2><span id="result-count">正在整理书架…</span></div><div class="view-toggle" role="group" aria-label="显示方式"><button class="active icon-button" data-layout="grid" aria-label="封面视图"><span data-icon="grid"></span></button><button class="icon-button" data-layout="list" aria-label="列表视图"><span data-icon="list"></span></button></div></div>
-        <div class="toolbar"><label class="search-field"><span data-icon="search"></span><input id="search-input" placeholder="搜索书名或作者…" autocomplete="off"><kbd>/</kbd><button id="clear-search" class="icon-button" aria-label="清空搜索" hidden>×</button></label><select id="sort-select" aria-label="排序"><option value="modified">文件更新时间</option><option value="added">最近发现</option><option value="title">书名排序</option><option value="size">文件大小</option><option value="words">字数从多到少</option></select></div>
-        <div class="classification-filters"><label>第一分类<select id="level-filter" data-classification-filter="level"><option value="">全部分级</option><option>清水</option><option>肉文</option></select></label><label>第二分类<select id="relationship-filter" data-classification-filter="relationship"><option value="">全部关系</option><option>BL</option><option>GL</option><option value="GB">GB 女操男</option><option>BG</option><option value="大女主">大女主 · 女主无 CP</option></select></label><label>BG 子分类<select id="pairing-filter" data-classification-filter="pairing" disabled><option value="">全部配对</option><option value="1v1">1v1</option><option value="np">np · 1v2 及以上</option></select></label><label>题材 tag<select id="tag-filter" data-classification-filter="tag"><option value="">全部题材</option><option>末日</option><option>ABO</option><option>兽世</option><option>古代言情</option><option>现代言情</option><option>星际</option><option>虫族</option><option>校园</option></select></label><label class="check-line"><input type="checkbox" data-classification-filter="classification_status">分类不完整</label></div>
+        <div class="toolbar catalog-search"><label class="search-field"><span data-icon="search"></span><input id="search-input" placeholder="搜索书名、作者，找到下一个故事…" autocomplete="off"><kbd>/</kbd><button id="clear-search" class="icon-button" aria-label="清空搜索" hidden>×</button></label><div class="view-toggle" role="group" aria-label="显示方式"><button class="active icon-button" data-layout="grid" aria-label="封面视图"><span data-icon="grid"></span></button><button class="icon-button" data-layout="list" aria-label="列表视图"><span data-icon="list"></span></button></div></div>
+        <div class="catalog-layout">
+        <button id="mobile-filter-toggle" class="button secondary" aria-expanded="false" aria-controls="filter-panel">筛选小说</button>
+        <aside id="filter-panel" class="filter-panel" aria-label="筛选小说"><div class="filter-panel-heading"><span>FILTERS <small>筛选</small></span><button id="reset-filters" class="text-button" hidden>清除</button></div><p class="filter-hint">同组多选满足其一，组间同时满足。数量为去重后的全库书目。</p><div id="filter-options"></div><div id="kind-filters"></div><label class="filter-option pending-filter"><input type="checkbox" data-filter="classification_status" value="pending"><span>只看分类不完整</span></label></aside>
+        <div class="shelf-results"><div class="shelf-heading"><div><h2>全部小说</h2><span id="result-count">正在整理书架…</span></div><select id="sort-select" aria-label="排序"><option value="modified">文件更新时间</option><option value="added">最近发现</option><option value="title">书名排序</option><option value="size">文件大小</option><option value="words">字数从多到少</option></select></div>
         <div class="classification-summary"><span id="classification-summary">正在读取分类进度…</span><button id="classification-settings-button" class="text-button">分类与字数</button></div>
-        <div class="filter-bar"><div id="kind-filters" class="kind-filters"><button class="filter active" data-kind="">全部格式</button><button class="filter" data-kind="text">TXT 文本</button><button class="filter" data-kind="epub">EPUB</button><button class="filter" data-kind="pdf">PDF</button><button class="filter" data-kind="comic">漫画</button><button class="filter" data-kind="other">其他</button></div><button id="reset-filters" class="text-button" hidden>清除筛选</button></div>
+        <div id="active-filters" class="active-filters" aria-label="已选筛选条件"></div>
         <div id="library-error" class="notice" role="status" hidden></div>
         <div id="book-grid" class="book-grid" aria-live="polite"></div>
         <div id="empty-state" class="empty-state" hidden><span data-icon="library"></span><h3>没有找到这本小说</h3><p>换个关键词，或等待书库扫描完成。</p><button id="empty-action" class="button secondary">查看全部小说</button></div>
         <div class="pagination" id="pagination"></div>
+        </div></div>
       </section>
-      <footer class="page-footer"><span><img src="/favicon.svg" alt="">书屿 · 每个故事，都能找到。</span><span>本地索引 · 每 5 分钟自动扫描</span></footer>
+      <footer class="page-footer"><span><img src="/favicon.svg" alt="">爱妻的书屿 · 每个故事，都能找到。</span><span>本地索引 · 每 5 分钟自动扫描</span></footer>
     </main>
   </div>
   <dialog id="detail-dialog" class="detail-dialog"><div id="detail-content"></div></dialog>

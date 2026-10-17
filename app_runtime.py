@@ -42,7 +42,7 @@ def reuse_or_reload(port, expected, root=None):
     """Return True to reuse; False after requesting a matching app's shutdown."""
     url = f'http://127.0.0.1:{port}'
     try:
-        with urllib.request.urlopen(url+'/api/runtime', timeout=3) as response:
+        with urllib.request.urlopen(url+'/api/runtime', timeout=10) as response:
             if not response.headers.get('Server', '').startswith('Shuyu/'):
                 raise ValueError('Not Shuyu')
             current = json.loads(response.read(16384))
@@ -51,7 +51,7 @@ def reuse_or_reload(port, expected, root=None):
     except (OSError, ValueError) as exc:
         if isinstance(exc, urllib.error.HTTPError):
             exc.close()
-        raise SystemExit(f'端口 {port} 已被占用，或仍有旧版书屿在运行。请关闭原来的书屿终端后重试。') from exc
+        raise SystemExit(f'端口 {port} 已被占用，或仍有旧版爱妻的书屿在运行。请关闭原来的爱妻的书屿终端后重试。') from exc
     if (current.get('app') != 'shuyu' or current.get('protocol') != 1 or
             any(os.path.normcase(current.get(key, '')) != os.path.normcase(expected[key]) for key in ['base', 'data_dir'])):
         raise SystemExit(f'端口 {port} 已被其他程序或另一份书库占用，请用 --port 指定其他端口。')
@@ -75,8 +75,8 @@ def reuse_or_reload(port, expected, root=None):
             exc.close()
         raise SystemExit(message) from exc
     except (OSError, ValueError) as exc:
-        raise SystemExit('无法重启旧版书屿，请关闭原来的书屿终端后重试。') from exc
-    print('检测到程序更新，正在切换到新版书屿…', flush=True)
+        raise SystemExit('无法重启旧版爱妻的书屿，请关闭原来的爱妻的书屿终端后重试。') from exc
+    print('检测到程序更新，正在切换到新版爱妻的书屿…', flush=True)
     return False
 
 
@@ -93,7 +93,7 @@ def bind_server(port, handler, identity, root=None):
                 break
             except OSError as exc:
                 if time.monotonic() >= deadline:
-                    raise SystemExit('旧版书屿尚未退出，请稍后重新启动。') from exc
+                    raise SystemExit('旧版爱妻的书屿尚未退出，请稍后重新启动。') from exc
                 time.sleep(.1)
     server.runtime = identity
     return server

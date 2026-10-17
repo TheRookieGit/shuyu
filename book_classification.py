@@ -232,9 +232,10 @@ class Classifier:
 
     def summary(self):
         root=self.lib.root
+        visible=' AND '+self.lib.organizer.visible_sql('b') if hasattr(self.lib,'organizer') else ''
         with self.lib.db() as db:
-            statuses={r['status']:r['n'] for r in db.execute('SELECT coalesce(c.status,\'pending\') status,count(*) n FROM books b LEFT JOIN book_classification c ON c.book_id=b.id WHERE b.root=? AND b.missing=0 AND b.kind<>\'archive\' GROUP BY 1',(root,))}
-            counts=db.execute("SELECT count(*) n FROM book_text_metrics m JOIN books b ON b.id=m.book_id WHERE b.root=? AND b.missing=0 AND m.version_id='' AND m.word_count IS NOT NULL",(root,)).fetchone()[0]
+            statuses={r['status']:r['n'] for r in db.execute('SELECT coalesce(c.status,\'pending\') status,count(*) n FROM books b LEFT JOIN book_classification c ON c.book_id=b.id WHERE b.root=? AND b.missing=0 AND b.kind<>\'archive\''+visible+' GROUP BY 1',(root,))}
+            counts=db.execute("SELECT count(*) n FROM book_text_metrics m JOIN books b ON b.id=m.book_id WHERE b.root=? AND b.missing=0 AND m.version_id='' AND m.word_count IS NOT NULL"+visible,(root,)).fetchone()[0]
         return {'taxonomy':TAXONOMY,'state':self.progress(),'statuses':statuses,'counted':counts,'count_basis':'文字和数字各计 1，不含标点和空白；原有附注计入。'}
 
     def progress(self):
@@ -257,7 +258,11 @@ class Classifier:
                'status':'classified' if level and relation and (relation!='BG' or pairing) else 'partial' if level or relation or tags else 'pending',
                'evidence':data.get('evidence',[]) if method!='manual' else [{'source':'人工确认','reason':'手动核验书目分类'}],
                'method':method,'reviewed':method in {'manual','review'}}
-        self._write([(book,value,None,'',self.signature(book),'')]);return self.classification(book['id'])
+        copies=self.lib.organizer.ids(book['id']) if hasattr(self.lib,'organizer') else [book['id']]
+        copies=[self.lib.book(uid) for uid in copies]
+        self._write([(copy,value,None,'',self.signature(copy),'') for copy in copies])
+        if hasattr(self.lib,'organizer'):self.lib.organizer.cache.clear()
+        return self.classification(book['id'])
 
     def suggest(self,data):
         # Explicit one-book action only. Never used by the initial local batch.
@@ -284,6 +289,8 @@ class Classifier:
     def _write(self,results):
         with self.lib.db() as db:
             for book,value,count,digest,signature,error in results:
+                if hasattr(self.lib,'organizer') and '_publication' in book:
+                    self.lib.organizer.record_publication(db,book,value=book['_publication'])
                 db.execute('''INSERT INTO book_classification VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(book_id) DO UPDATE SET level=excluded.level,relationship=excluded.relationship,pairing=excluded.pairing,
                     tags=excluded.tags,status=excluded.status,evidence=excluded.evidence,method=excluded.method,reviewed=excluded.reviewed,
@@ -343,6 +350,8 @@ class Classifier:
                     error=str(exc) if isinstance(exc,(ValueError,ArchiveError)) else '无法完整读取文字，请检查文件或压缩包。'
                     if metadata_only:
                         self._progress([(book,{},None,'',signature,error)]);continue
+                from catalog_organizer import infer_publication
+                book['_publication']=infer_publication(book['name'],text)
                 value=infer(book['name'],book['rel'],text)
                 if metadata_only:
                     previous=json.loads(book.get('previous_evidence') or '[]')
@@ -399,6 +408,7 @@ class Classifier:
                 futures=[pool.submit(self._group,group,mode=='metadata') for group in groups.values()]
                 for future in as_completed(futures):future.result()
             self.state['phase']='已停止，可继续剩余书目' if self.stop.is_set() else '本地分类和统计完成'
+            if hasattr(self.lib,'organizer'):self.lib.organizer.refresh()
         except Exception:
             self.state['phase']='整理中断，已完成的结果已保存，可继续重试'
         finally:

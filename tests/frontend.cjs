@@ -128,20 +128,41 @@ async function run(){
   $('#apply-classification-suggestion').click();assert.ok(!$('input[name="book-tag"][value="ABO"]').checked,'suggestion only fills draft form');
   $('[data-close="detail-dialog"]').click();$('#reset-filters').click();
   await waitFor(()=>d.querySelectorAll('.book-card').length===8,'classification shelf');
-  const change=(selector,value)=>{$(selector).value=value;$(selector).dispatchEvent(new w.Event('change',{bubbles:true}));};
-  change('#level-filter','肉文');change('#relationship-filter','BG');change('#pairing-filter','np');change('#tag-filter','ABO');
+  const check=(field,value)=>$(`input[data-filter="${field}"][value="${value}"]`).click();
+  check('level','肉文');check('relationship','BG');check('pairing','np');check('tag','ABO');
   await waitFor(()=>d.querySelectorAll('.book-card').length===1&&$('.card-title').textContent==='夜航','combined taxonomy filters');
   assert.match($('.book-classification').textContent,/肉文BGnp末日ABO/);assert.match($('.card-meta').textContent,/8 字/);
   $('#reset-filters').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'reset taxonomy');
-  assert.equal($('#level-filter').value,'');assert.ok($('#pairing-filter').disabled);
+  assert.equal(d.querySelectorAll('[data-filter]:checked').length,0);
+  assert.equal(d.querySelectorAll('.filter-group').length,6);assert.ok($('.filter-panel'));
+  check('kind','comic');check('kind','pdf');await waitFor(()=>d.querySelectorAll('.book-card').length===4,'OR within format group');
+  assert.equal(d.querySelectorAll('.selected-filter').length,2);
+  $('.selected-filter[data-value="pdf"]').click();await waitFor(()=>d.querySelectorAll('.book-card').length===2,'remove one selected filter');
+  $('#reset-filters').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'reset multi select');
+  $('#search-input').value='小舟';$('#search-input').dispatchEvent(new w.Event('input',{bubbles:true}));
+  await waitFor(()=>d.querySelectorAll('.book-card').length===1,'deduplicated source book');
+  assert.match($('.source-badge').textContent,/2 份来源/);
+  $('.cover-button').click();await waitFor(()=>$('#detail-dialog').open&&$('#book-source')&&$('#publication-form'),'copies and publication editor');
+  assert.equal($('#book-source').options.length,2);assert.match($('#publication-label').textContent,/完结/);
+  $('#publication-state').value='断更';$('#publication-date').value='2000-01-01';
+  $('#publication-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await waitFor(()=>$('#publication-label').textContent==='断更','six-month publication status saved');
+  const source=$('#book-source').value,other=[...$('#book-source').options].find(o=>o.value!==source).value;
+  $('#book-source').value=other;$('#book-source').dispatchEvent(new w.Event('change'));
+  await waitFor(()=>$('#detail-content').dataset.bookId===other&&$('#book-source').value===other,'switch retained source copy');
+  $('#reveal-button').click();await waitFor(()=>JSON.parse(requests.filter(r=>r.url==='/api/reveal').at(-1).options.body).id===other,'locate selected copy');
+  $('[data-close="detail-dialog"]').click();$('#reset-filters').click();
+  check('publication','断更');await waitFor(()=>d.querySelectorAll('.book-card').length===1&&$('.card-title').textContent==='夜航','publication filter');
+  $('#reset-filters').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'reset status filter');
   $('#classification-settings-button').click();assert.ok($('#classification-dialog').open);assert.match($('#classification-dialog').textContent,/不调用 Claude/);
   $('[data-close="classification-dialog"]').click();
   console.log('PASS fixed taxonomy, manual correction, multiple tags, word count, combined filters and explicit-only Claude suggestion');
+  console.log('PASS sidebar multi-select counts and removable chips, grouped source copies, source-aware reveal and publication status');
   assert.ok(!requests.some(r=>/\/api\/(update|progress|export|import)/.test(r.url)),'no activity or annotation writes');
   assert.deepEqual(errors,[],'no frontend runtime errors');
   console.log('All catalog integration checks passed (DOM; visual rendering not covered).');
 }
-run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{
+run().catch(error=>{console.error(error);if(dom)console.error('Visible notices:',[...dom.window.document.querySelectorAll('.notice:not([hidden])')].map(el=>el.textContent));process.exitCode=1;}).finally(async()=>{
   await delay(180);dom?.window.close();
   if(child.exitCode===null){child.stdin.end('stop\n');await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(2000)]);if(child.exitCode===null)child.kill();}
 });

@@ -1,4 +1,4 @@
-"""书屿 — a local catalog of novels and comics, without reading-history tracking."""
+"""爱妻的书屿 — a local catalog of novels and comics, without reading-history tracking."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,7 @@ from platform_utils import reveal_in_explorer
 from ai_cleaner import Cleaner, CleanError
 from book_classification import Classifier, TAXONOMY
 from app_runtime import bind_server, runtime_identity
+from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_ago
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -90,6 +91,8 @@ class Library:
         self.engine = ArchiveEngine(self.data_dir,self.passwords)
         self.cleaner = Cleaner(self)
         self.classifier = Classifier(self)
+        self.organizer = CatalogOrganizer(self)
+        self.organizer.refresh()
 
     @contextmanager
     def db(self):
@@ -235,6 +238,8 @@ class Library:
                     db.execute('UPDATE archive_catalog SET present=0 WHERE root=? AND seen<>?',(root_string,generation))
             else:
                 self.scan_state['error'] = f'有 {len(errors)} 处暂时无法读取，已保留原有索引。'
+            self.scan_state['phase'] = '合并重复书目'
+            self.organizer.refresh()
             self.scan_state['last_scan'] = time.time()
         except Exception as exc:
             self.scan_state['error'] = str(exc)
@@ -258,6 +263,8 @@ class Library:
         book['version_count'] = 1+len(book['versions'])
         book['classification'] = self.classifier.classification(uid)
         book['text_metrics'] = self.classifier.metrics(uid)
+        book['copies'] = self.organizer.copies(uid)
+        book['publication'] = self.organizer.publication(uid)
         return book
 
     def versions(self,uid):
@@ -293,23 +300,32 @@ class Library:
         return path
 
     def listing(self,query):
-        where,params = ['root=?','missing=0',"kind<>'archive'"],[self.root]
+        where,params = ['root=?','missing=0',"kind<>'archive'",self.organizer.visible_sql()],[self.root]
         for word in query.get('q','').strip().split():
-            where.append("(title || ' ' || author LIKE ? ESCAPE '\\')")
-            params.append('%'+word.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%')
-        if query.get('kind'):
-            where.append('kind=?');params.append(query['kind'])
+            where.append("id IN (SELECT coalesce(d.canonical_id,s.id) FROM books s LEFT JOIN book_duplicates d ON d.book_id=s.id WHERE s.root=? AND s.missing=0 AND (s.title || ' ' || s.author LIKE ? ESCAPE '\\'))")
+            params.extend([self.root,'%'+word.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%'])
+        def selections(field,choices):
+            values=list(dict.fromkeys(v for v in str(query.get(field,'')).split(',') if v))
+            if not set(values)<=set(choices):raise UserError('无效的筛选选项。')
+            return values
+        kinds=selections('kind',['text','epub','pdf','comic','other'])
+        if kinds:
+            where.append('id IN (SELECT coalesce(d.canonical_id,s.id) FROM books s LEFT JOIN book_duplicates d ON d.book_id=s.id WHERE s.root=? AND s.missing=0 AND s.kind IN ('+','.join('?' for _ in kinds)+'))');params.extend([self.root,*kinds])
         classification_where=[]
         for field,choices in [('level',TAXONOMY['levels']),('relationship',TAXONOMY['relationships']),('pairing',TAXONOMY['pairings'])]:
-            if query.get(field):
-                if query[field] not in choices:raise UserError('无效的分类筛选。')
-                classification_where.append(f'{field}=?');params.append(query[field])
-        if query.get('tag'):
-            if query['tag'] not in TAXONOMY['tags']:raise UserError('无效的 tag。')
-            classification_where.append("EXISTS (SELECT 1 FROM json_each(book_classification.tags) WHERE value=?)");params.append(query['tag'])
+            values=selections(field,choices)
+            if values:
+                classification_where.append(f'{field} IN ('+','.join('?' for _ in values)+')');params.extend(values)
+        tags=selections('tag',TAXONOMY['tags'])
+        if tags:
+            classification_where.append("EXISTS (SELECT 1 FROM json_each(book_classification.tags) WHERE value IN ("+','.join('?' for _ in tags)+'))');params.extend(tags)
         if classification_where:where.append('id IN (SELECT book_id FROM book_classification WHERE '+' AND '.join(classification_where)+')')
         if query.get('classification_status')=='pending':
             where.append("id NOT IN (SELECT book_id FROM book_classification WHERE status='classified')")
+        publication=selections('publication',PUBLICATION_STATES)
+        if publication:
+            where.append('id IN (SELECT id FROM ('+self.organizer.publication_projection()+') WHERE pub_status IN ('+','.join('?' for _ in publication)+'))')
+            params.extend([six_months_ago().isoformat(),self.root,*publication])
         order = {'added':'added DESC,mtime DESC','title':'title COLLATE NOCASE','size':'size DESC',
                  'words':"(SELECT word_count FROM book_text_metrics WHERE book_id=books.id AND version_id='') DESC"}.get(query.get('sort'),'mtime DESC')
         page = max(1,int(query.get('page',1)))
@@ -317,7 +333,7 @@ class Library:
         clause = ' AND '.join(where)
         with self.db() as db:
             total = db.execute('SELECT count(*) FROM books WHERE '+clause,params).fetchone()[0]
-            rows = db.execute(f'SELECT {CATALOG_FIELDS},(SELECT count(*)+1 FROM book_versions WHERE book_id=books.id) AS version_count FROM books WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
+            rows = db.execute(f'SELECT {CATALOG_FIELDS},(SELECT count(*)+1 FROM book_versions WHERE book_id=books.id) AS version_count,(SELECT count(*)+1 FROM book_duplicates WHERE canonical_id=books.id) AS copy_count FROM books WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
             ids=[r['id'] for r in rows];classification={};metrics={}
             if ids:
                 slots=','.join('?' for _ in ids)
@@ -327,7 +343,8 @@ class Library:
         for row in rows:
             item=dict(row);value=classification.get(row['id'],{'level':'','relationship':'','pairing':'','tags':'[]','status':'pending','reviewed':False})
             value['tags']=json.loads(value['tags']);item['classification']=value;metric=metrics.get(row['id'])
-            item['word_count']=metric['word_count'] if metric and metric['source_signature']==self.classifier.signature(row) else None;items.append(item)
+            item['word_count']=metric['word_count'] if metric and metric['source_signature']==self.classifier.signature(row) else None
+            item['publication']=self.organizer.publication(row['id']);items.append(item)
         return {'items':items,'total':total,'page':page,'pages':(total+limit-1)//limit}
 
     def issues(self):
@@ -337,9 +354,10 @@ class Library:
 
     def stats(self):
         with self.db() as db:
-            rows = db.execute("SELECT kind,count(*) n FROM books WHERE root=? AND missing=0 AND kind<>'archive' GROUP BY kind",(self.root,)).fetchall()
+            rows = db.execute("SELECT kind,count(*) n FROM books WHERE root=? AND missing=0 AND kind<>'archive' AND "+self.organizer.visible_sql()+" GROUP BY kind",(self.root,)).fetchall()
+            sources=db.execute("SELECT count(*) FROM books WHERE root=? AND missing=0 AND kind<>'archive'",(self.root,)).fetchone()[0]
         kinds = {r['kind']:r['n'] for r in rows}
-        return {'total':sum(kinds.values()),'kinds':kinds,'root':self.root,'scan':dict(self.scan_state),
+        return {'total':sum(kinds.values()),'sources':sources,'merged':sources-sum(kinds.values()),'kinds':kinds,'root':self.root,'scan':dict(self.scan_state),
                 'issues':len(self.issues()),'password_count':len(self.passwords),'interval':self.interval}
 
     def external_path(self,book):
@@ -425,6 +443,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config())
             if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status())
             if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
+            if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
             static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
             if url.path in static:
@@ -450,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                 if data.get('instance')!=self.server.runtime['instance']:
                     return self.json({'error':'后台服务已变化，请重新启动。'},409)
                 if self.lib.cleaner.active or self.lib.classifier.progress()['running']:
-                    return self.json({'error':'AI 或分类任务正在进行，请完成或停止后再重新启动书屿。'},409)
+                    return self.json({'error':'AI 或分类任务正在进行，请完成或停止后再重新启动爱妻的书屿。'},409)
                 self.json({'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start()
                 return
@@ -459,6 +478,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/classification/stop':
                 self.lib.classifier.stop.set();return self.json({'ok':True})
             if self.path=='/api/classification/save':return self.json(self.lib.classifier.save(data))
+            if self.path=='/api/publication/save':return self.json(self.lib.organizer.save_publication(data))
+            if self.path=='/api/duplicates/refresh':return self.json(self.lib.organizer.refresh())
             if self.path=='/api/classification/suggest':return self.json(self.lib.classifier.suggest(data))
             if self.path=='/api/text-metrics':return self.json(self.lib.classifier.measure(data['id'],str(data.get('version_id','')),bool(data.get('force'))))
             if self.path=='/api/ai/test':return self.json(self.lib.cleaner.test_connection())
@@ -480,7 +501,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='书屿 · 小说目录')
+    parser = argparse.ArgumentParser(description='爱妻的书屿 · 小说目录')
     parser.add_argument('--root',help='书库目录')
     parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--data-dir',default=str(BASE/'.data'))
@@ -500,7 +521,7 @@ def main():
     lib.start_scan()
     threading.Thread(target=lib.auto_scan,daemon=True).start()
     url = f'http://127.0.0.1:{args.port}'
-    print(f'书屿已启动：{url}\n书库：{lib.root}\n自动扫描所有子目录和嵌套压缩包。关闭此窗口即可停止。',flush=True)
+    print(f'爱妻的书屿已启动：{url}\n书库：{lib.root}\n自动扫描所有子目录和嵌套压缩包。关闭此窗口即可停止。',flush=True)
     if not args.no_browser:threading.Timer(.6,lambda:webbrowser.open(url)).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass

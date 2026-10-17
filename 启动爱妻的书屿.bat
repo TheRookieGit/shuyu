@@ -1,7 +1,7 @@
 @echo off
 setlocal
 chcp 65001 >nul
-title Shuyu - Local Library
+title Aiqi Shuyu - Local Library
 cd /d "%~dp0"
 if errorlevel 1 goto directory_error
 
@@ -28,7 +28,7 @@ echo Cannot open the application folder: "%~dp0"
 
 :failed
 echo.
-echo Shuyu could not start. The error is shown above.
+echo Aiqi Shuyu could not start. The error is shown above.
 echo Keep this window open when reporting the problem.
 pause
 exit /b 1

@@ -78,7 +78,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_legacy_server_gives_explicit_restart_error(self):
         del self.server.runtime
-        with self.assertRaisesRegex(SystemExit,'旧版书屿'):
+        with self.assertRaisesRegex(SystemExit,'旧版爱妻的书屿'):
             bind_server(self.port, Handler, self.identity)
         self.assertTrue(self.thread.is_alive())
 
