@@ -12,7 +12,34 @@
 python server.py
 python server.py --root "D:\我的小说" --port 8766
 python server.py --no-browser
+python server.py --allow-origin https://therookiegit.github.io   # 允许 GitHub 网页版连接（启动 .bat 默认带此参数）
+python server.py --lan   # 另外允许局域网内的电脑直接用 IP 访问
 ```
+
+## 网页版（GitHub Pages）
+
+网页版地址：<https://therookiegit.github.io/shuyu/>。任何电脑、平板、手机都可以在任何地方打开。网页只是界面；书库文件、数据库、清理版和 AI 任务都只在 Windows 电脑上保存和运行，所有设备看到的都是同一份数据，不需要另外同步。Windows 电脑需要开机，服务窗口要保持开启。
+
+GitHub Pages 只托管 `web/` 中的静态页面，不包含任何书目数据。推送到 `main` 后，`.github/workflows/pages.yml` 会自动发布。第一次使用前，在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**。免费账户只能为公开仓库开启 Pages。
+
+### 一次性设置（Windows 电脑）
+
+1. 双击 **启动爱妻的书屿.bat**，在本机页面的「书库设置 → 网页版访问」里设置访问密码，至少 6 个字符。
+2. 给后台一个固定的 HTTPS 地址。推荐用 [Tailscale Funnel](https://tailscale.com/kb/1223/funnel)，免费，不用买域名，也不用在路由器上开端口：
+   - 安装 [Tailscale](https://tailscale.com/download) 并登录；在 Tailscale 管理后台开启 HTTPS 证书和 Funnel。
+   - 在命令行运行一次：`tailscale funnel --bg 8765`。`--bg` 会让 Funnel 在重启后继续生效。
+   - 记下输出的地址，例如 `https://windows-pc.tail1234.ts.net`，它就是「网页版地址」。
+3. 在任意设备打开网页版，填写网页版地址和访问密码登录。登录状态在这台设备上保留 30 天。
+
+也可以使用 Cloudflare Tunnel 等其他 HTTPS 隧道，只要把流量转发到 `http://localhost:8765` 即可。网页版运行在 HTTPS 上，所以后台地址也必须是 HTTPS。
+
+### 网页版的规则
+
+- Windows 本机直接访问 `http://127.0.0.1:8765` 不需要密码，与以前一样。经由隧道或网页版来的请求一律需要登录，即使它们最终从本机回环地址进入。
+- 网页版和其他设备上，「打开小说 / 定位小说」换成 **下载到这台电脑**：包内小说会自动取出后下载，图片目录会打包成一个 ZIP，也可以下载所选的清理版。下载链接 2 分钟内有效，只能使用一次。
+- 设置访问密码、重启后台、打开或定位文件只能在 Windows 电脑上操作；分类、AI 清理、书库设置等其他功能网页版也可以使用。
+- 修改访问密码后，所有设备都需要重新登录；网页上「退出登录」只退出当前设备。连续输错 5 次密码会暂时锁定该来源。
+- 只有 `--allow-origin` 列出的网页可以跨站调用后台。如果把网页部署到其他地址，启动时加上对应的 `--allow-origin`。
 
 ## 自动处理压缩包
 
@@ -96,7 +123,7 @@ Windows 保存的 API Key 通过当前用户的 DPAPI 加密，接口不会把 K
 
 分类和字数同样保存在 `.data/library.sqlite3`，`.data/classification` 保存本地批处理进度与整理报告。字数结果会按源文件版本复用。
 
-服务只监听 `127.0.0.1`；页面不加载外部字体、图片或脚本。每 5 分钟扫描新增内容，磁盘临时断开时保留已知索引。
+服务默认只监听 `127.0.0.1`，网页版通过隧道访问；带 `--lan` 时还会监听局域网。除本机直接访问外，所有请求都需要登录令牌。令牌保存在数据库的 `sessions` 表，访问密码只保存加盐哈希。页面不加载外部字体、图片或脚本。每 5 分钟扫描新增内容，磁盘临时断开时保留已知索引。
 
 ## 验证
 

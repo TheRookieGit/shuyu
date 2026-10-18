@@ -14,12 +14,12 @@ echo Install Python from https://www.python.org/downloads/ and try again.
 goto failed
 
 :use_py
-py -3 -X utf8 "%~dp0server.py" %*
+py -3 -X utf8 "%~dp0server.py" --allow-origin https://therookiegit.github.io %*
 if errorlevel 1 goto failed
 exit /b 0
 
 :use_python
-python -X utf8 "%~dp0server.py" %*
+python -X utf8 "%~dp0server.py" --allow-origin https://therookiegit.github.io %*
 if errorlevel 1 goto failed
 exit /b 0
 

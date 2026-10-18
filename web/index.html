@@ -6,16 +6,16 @@
   <meta name="theme-color" content="#33594b">
   <meta name="description" content="自动找到目录和压缩包里的小说。爱妻的书屿：分类、去重、统计字数，保留每个故事。">
   <title>爱妻的书屿 · 我的小说</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css">
-  <script defer src="/app.js"></script>
-  <script defer src="/ai.js"></script>
-  <script defer src="/classification.js"></script>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+  <script defer src="ai.js"></script>
+  <script defer src="classification.js"></script>
 </head>
 <body>
   <div class="catalog-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="爱妻的书屿首页"><img src="/favicon.svg" alt=""><span>爱妻的书屿<small>你的小说，都在这里</small></span></a>
+      <a class="brand" href="./" aria-label="爱妻的书屿首页"><img src="favicon.svg" alt=""><span>爱妻的书屿<small>你的小说，都在这里</small></span></a>
       <div class="top-actions"><button id="issues-button" class="text-button" hidden></button><button id="scan-button" class="button secondary"><span data-icon="refresh"></span><span>扫描书库</span></button><button id="settings-button" class="icon-button" aria-label="书库设置" title="书库设置"><span data-icon="settings"></span></button></div>
     </header>
     <main id="library-main">
@@ -35,15 +35,25 @@
         <div class="pagination" id="pagination"></div>
         </div></div>
       </section>
-      <footer class="page-footer"><span><img src="/favicon.svg" alt="">爱妻的书屿 · 每个故事，都能找到。</span><span>本地索引 · 每 5 分钟自动扫描</span></footer>
+      <footer class="page-footer"><span><img src="favicon.svg" alt="">爱妻的书屿 · 每个故事，都能找到。</span><span>本地索引 · 每 5 分钟自动扫描</span></footer>
     </main>
   </div>
   <dialog id="detail-dialog" class="detail-dialog"><div id="detail-content"></div></dialog>
   <dialog id="classification-dialog" class="settings-dialog"><div class="dialog-heading"><div><div class="eyebrow">YOUR BOOK TAXONOMY</div><h2>分类与字数</h2></div><button class="icon-button" data-close="classification-dialog" aria-label="关闭">×</button></div><p class="field-help">第一分类：清水 / 肉文。第二分类：BL / GL / GB / BG（1v1、np）/ 大女主（女主无 CP）。题材可多选。</p><p id="classification-progress" role="status"></p><p class="field-help">本地整理读取简介、已有标记和文字特征，不调用 Claude。缺少依据的项目保留待确认；本地推断会标注待核验，可在书目详情修正。</p><div class="button-row"><button class="button primary" id="classification-start">整理新增 / 未统计书目</button><button class="button secondary" id="classification-retry">重试读取受限书目</button><button class="button secondary" id="classification-stop" hidden>停止后续整理</button></div><p class="field-help">字数按文件中的文字和数字计数，不含标点、空白，原有附注计入。清理版独立计字。漫画及扫描 PDF 无法直接计字。</p><p id="classification-error" class="notice" hidden></p></dialog>
+  <dialog id="login-dialog" class="settings-dialog login-dialog">
+    <div class="brand"><img src="favicon.svg" alt=""><span>爱妻的书屿<small>你的小说，都在这里</small></span></div>
+    <form id="login-form"><div id="login-server-field" hidden><label class="field-label" for="login-server">网页版地址</label><input id="login-server" class="full-input" type="url" placeholder="例如 https://windows-pc.tail1234.ts.net" autocomplete="url" spellcheck="false"></div>
+      <label class="field-label" for="login-password">访问密码</label><input id="login-password" class="full-input" type="password" autocomplete="current-password" required>
+      <p id="login-message" class="field-help"></p><button class="button primary" type="submit">登录</button></form>
+  </dialog>
   <dialog id="settings-dialog" class="settings-dialog">
     <div class="dialog-heading"><div><div class="eyebrow">YOUR LOCAL LIBRARY</div><h2>书库设置</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="关闭">×</button></div>
     <form id="settings-form"><label class="field-label" for="root-input">书库位置</label><input id="root-input" class="full-input" required placeholder="例如 Z:\老婆小说漫画"><p class="field-help">包含所有子目录，压缩包会自动逐层处理。原文件保持原样。</p><label class="field-label" for="password-input">解压密码（加密压缩包才需要）</label><textarea id="password-input" rows="3" placeholder="有通用密码时可填写，每行一个。留空保持现有设置。" autocomplete="off" spellcheck="false"></textarea><p id="password-help" class="field-help">程序会自动尝试这些密码，无需手动解压。密码仅保存在本机。</p><button class="button primary" type="submit">保存并自动扫描</button></form>
     <div class="settings-divider"></div><button id="ai-settings-button" class="button secondary" type="button">Claude AI 设置</button><p class="field-help">Haiku 5.5 · 生成清理建议，确认后另存为同一本书的新版本。</p>
+    <div id="remote-access" hidden><div class="settings-divider"></div><h3>网页版访问</h3>
+      <div id="remote-local"><label class="field-label" for="remote-password-input">网页版访问密码</label><input id="remote-password-input" class="full-input" type="password" minlength="6" autocomplete="new-password" placeholder="至少 6 个字符"><p id="remote-help" class="field-help"></p><button id="remote-password-save" class="button secondary" type="button">保存访问密码</button></div>
+      <div id="remote-client"><p class="field-help">正在使用网页版。书库文件保存在 Windows 电脑上；打开和定位只能在那台电脑上进行，这里可以直接下载小说。</p><button id="logout-button" class="button secondary" type="button">退出登录</button></div>
+    </div>
     <div class="format-help"><span data-icon="info"></span><p>管理小说目录、内容分类和题材 tag，不记录阅读历史、状态、收藏或笔记。打开和定位包内小说时，会自动取出选中的文件；「定位原压缩包」可查看原始来源。</p></div>
   </dialog>
   <dialog id="issues-dialog" class="settings-dialog issues-dialog"><div class="dialog-heading"><div><div class="eyebrow">ARCHIVE PROCESSING</div><h2>压缩包处理结果</h2></div><button class="icon-button" data-close="issues-dialog" aria-label="关闭">×</button></div><p class="field-help">正常的压缩包会自动展开，下面只列出无法完成的具体原因。</p><div id="issue-list"></div><div class="button-row"><button class="button secondary" id="retry-archives">自动重试</button><button class="button primary" id="archive-password-settings">填写解压密码</button></div></dialog>

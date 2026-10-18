@@ -9,12 +9,14 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import threading
 import time
 import urllib.parse
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
@@ -23,6 +25,7 @@ from ai_cleaner import Cleaner, CleanError
 from book_classification import Classifier, TAXONOMY
 from app_runtime import bind_server, runtime_identity
 from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_ago
+from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, lan_addresses
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -93,6 +96,7 @@ class Library:
         self.classifier = Classifier(self)
         self.organizer = CatalogOrganizer(self)
         self.organizer.refresh()
+        self.access = RemoteAccess(self)
 
     @contextmanager
     def db(self):
@@ -381,6 +385,22 @@ class Library:
         reveal_in_explorer(path)
         return {'ok':True,'path':str(path),'extracted':bool(source_chain(book)) and not original and not version_id}
 
+    def download(self,uid,version_id=''):
+        """Return (path,name,temporary) for sending the selected copy to another computer."""
+        book = self.book(uid)
+        path = self.version_path(book,version_id)
+        if not path.is_dir():
+            name = path.name if version_id or source_chain(book) else book['name']
+            return path,Path(name).name,False
+        # Image folders are sent as one uncompressed ZIP so the browser receives a single file.
+        folder = self.data_dir/'downloads'
+        folder.mkdir(exist_ok=True)
+        target = folder/f'{hashlib.sha256(str(path).encode()).hexdigest()[:16]}-{time.time_ns()}.zip'
+        with zipfile.ZipFile(target,'w',zipfile.ZIP_STORED) as archive:
+            for item in sorted(path.rglob('*')):
+                if item.is_file():archive.write(item,item.relative_to(path).as_posix())
+        return target,path.name+'.zip',True
+
     def settings(self,data):
         if self.classifier.progress()['running']:
             raise UserError('分类和字数统计正在进行，请完成或停止后再切换书库。')
@@ -402,6 +422,11 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
+    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+    PUBLIC_API = {'/api/session','/api/login','/api/download'}
+    # These act on the Windows machine itself, so other computers may not call them.
+    LOCAL_ONLY = {'/api/runtime/reload','/api/open','/api/reveal','/api/access/password'}
+    FORWARDED = ('X-Forwarded-For','Forwarded','Cf-Connecting-Ip','X-Real-Ip','Tailscale-User-Login')
 
     @property
     def lib(self):
@@ -410,8 +435,58 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args):
         pass
 
-    def allowed(self):
-        return self.headers.get('Host','') in {f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'}
+    def same_origin(self):
+        origin = self.headers.get('Origin')
+        return not origin or urllib.parse.urlsplit(origin).netloc==self.headers.get('Host','')
+
+    def allowed_origin(self):
+        origin = self.headers.get('Origin','')
+        return origin if origin and origin in getattr(self.server,'allowed_origins',()) else ''
+
+    def is_local(self):
+        # Tunnels connect from loopback too, so a proxied or cross-site request is never trusted as local.
+        return (is_loopback(self.client_address[0]) and self.same_origin() and not any(self.headers.get(h) for h in self.FORWARDED)
+                and self.headers.get('Host','') in {f'{h}:{self.server.server_port}' for h in LOCAL_HOSTS})
+
+    def client_ip(self):
+        # Behind a local tunnel every visitor arrives from loopback; the tunnel names the real address.
+        forwarded = self.headers.get('Cf-Connecting-Ip') or self.headers.get('X-Forwarded-For','').split(',')[0].strip()
+        return forwarded if forwarded and is_loopback(self.client_address[0]) else self.client_address[0]
+
+    def token(self):
+        scheme,_,value = self.headers.get('Authorization','').partition(' ')
+        return value.strip() if scheme.lower()=='bearer' else ''
+
+    def authorized(self):
+        return self.is_local() or self.lib.access.valid(self.token())
+
+    def guard(self,path):
+        """Send a refusal and return False when this request may not reach the route."""
+        if not self.same_origin() and not self.allowed_origin():
+            self.json({'error':'不允许跨站请求。'},403);return False
+        if path in self.LOCAL_ONLY and not self.is_local():
+            self.json({'error':'此操作只能在存放书库的 Windows 电脑上进行。'},403);return False
+        if path.startswith('/api/') and path not in self.PUBLIC_API and not self.authorized():
+            self.json({'error':'请先登录。','login':True},401);return False
+        return True
+
+    def end_headers(self):
+        origin = self.allowed_origin()
+        if origin:
+            self.send_header('Access-Control-Allow-Origin',origin)
+            self.send_header('Vary','Origin')
+            self.send_header('Access-Control-Expose-Headers','Content-Disposition')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        if not self.allowed_origin():
+            return self.json({'error':'不允许跨站请求。'},403)
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Methods','GET, POST')
+        self.send_header('Access-Control-Allow-Headers','Authorization, Content-Type')
+        self.send_header('Access-Control-Max-Age','600')
+        self.send_header('Content-Length','0')
+        self.end_headers()
 
     def send_content(self,status,content_type,payload,extra=None):
         self.send_response(status)
@@ -425,17 +500,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def json(self,data,status=200):
-        self.send_content(status,'application/json; charset=utf-8',json.dumps(data,ensure_ascii=False).encode())
+    def json(self,data,status=200,extra=None):
+        self.send_content(status,'application/json; charset=utf-8',json.dumps(data,ensure_ascii=False).encode(),extra)
+
+    def send_file(self,path,name):
+        fallback = re.sub(r'[^A-Za-z0-9._-]','_',name) or 'book'
+        self.send_response(200)
+        self.send_header('Content-Type',mimetypes.guess_type(name)[0] or 'application/octet-stream')
+        self.send_header('Content-Length',str(path.stat().st_size))
+        self.send_header('Content-Disposition',f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{urllib.parse.quote(name)}")
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Cache-Control','no-store')
+        self.end_headers()
+        with open(path,'rb') as source:
+            shutil.copyfileobj(source,self.wfile,1024*1024)
+
+    def session(self):
+        local = self.is_local()
+        info = {'local':local,'authenticated':bool(self.authorized()),'password_set':self.lib.access.password_set}
+        if local:
+            info['origins'] = sorted(getattr(self.server,'allowed_origins',()))
+            if getattr(self.server,'lan',False):
+                info['addresses'] = [f'http://{a}:{self.server.server_port}' for a in lan_addresses()]
+        return info
 
     def do_GET(self):
-        if not self.allowed():
-            return self.json({'error':'Invalid host'},403)
         url = urllib.parse.urlsplit(self.path)
+        if not self.guard(url.path):return
         query = {k:v[-1] for k,v in urllib.parse.parse_qs(url.query).items()}
         try:
             if url.path=='/api/runtime' and hasattr(self.server,'runtime'):
                 return self.json({**self.server.runtime,'root':self.lib.root})
+            if url.path=='/api/session':return self.json(self.session())
             if url.path=='/api/stats':return self.json(self.lib.stats())
             if url.path=='/api/books':return self.json(self.lib.listing(query))
             if url.path=='/api/book':return self.json(self.lib.book(query['id']))
@@ -445,9 +541,15 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
             if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
-            static={'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
-            if url.path in static:
-                path = BASE/'web'/static[url.path]
+            if url.path=='/api/download':
+                try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
+                except PermissionError as exc:return self.json({'error':str(exc)},403)
+                path,name,temporary = self.lib.download(book_id,version_id)
+                try:return self.send_file(path,name)
+                finally:
+                    if temporary:path.unlink(missing_ok=True)
+            if url.path in self.STATIC:
+                path = BASE/'web'/self.STATIC[url.path]
                 return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
                     {'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'none'; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
             return self.json({'error':'Not found'},404)
@@ -455,16 +557,26 @@ class Handler(BaseHTTPRequestHandler):
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc)},400)
 
     def do_POST(self):
-        if not self.allowed():return self.json({'error':'Invalid host'},403)
-        origin = self.headers.get('Origin')
-        if origin and origin not in {f'http://127.0.0.1:{self.server.server_port}',f'http://localhost:{self.server.server_port}'}:
-            return self.json({'error':'不允许跨站请求。'},403)
+        if not self.guard(self.path):return
         if self.headers.get('Content-Type','').split(';')[0]!='application/json':
             return self.json({'error':'Expected JSON'},415)
         try:
             length = int(self.headers.get('Content-Length','0'))
             if not 0<length<=1024*1024:raise UserError('无效的请求长度。')
             data = json.loads(self.rfile.read(length))
+            if self.path=='/api/login':
+                try:token = self.lib.access.login(data.get('password'),self.client_ip())
+                except PermissionError as exc:return self.json({'error':str(exc)},403)
+                return self.json({'ok':True,'token':token,'days':SESSION_DAYS})
+            if self.path=='/api/logout':
+                self.lib.access.logout(self.token())
+                return self.json({'ok':True})
+            if self.path=='/api/download/ticket':
+                self.lib.book(data['id'])
+                return self.json({'url':'/api/download?'+urllib.parse.urlencode({'ticket':self.lib.access.ticket(data['id'],str(data.get('version_id','')))})})
+            if self.path=='/api/access/password':
+                self.lib.access.set_password(data.get('password'))
+                return self.json({'ok':True})
             if self.path=='/api/runtime/reload' and hasattr(self.server,'runtime'):
                 if data.get('instance')!=self.server.runtime['instance']:
                     return self.json({'error':'后台服务已变化，请重新启动。'},409)
@@ -506,8 +618,10 @@ def main():
     parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--data-dir',default=str(BASE/'.data'))
     parser.add_argument('--no-browser',action='store_true')
+    parser.add_argument('--lan',action='store_true',help='同时监听局域网，其他电脑可直接用 IP 地址登录访问')
+    parser.add_argument('--allow-origin',action='append',default=[],help='允许调用后台的网页来源，例如 https://用户名.github.io（可重复）')
     args = parser.parse_args()
-    identity = runtime_identity(BASE,args.data_dir)
+    identity = runtime_identity(BASE,args.data_dir,'0.0.0.0' if args.lan else '127.0.0.1')
     server = bind_server(args.port,Handler,identity,args.root)
     if server is None:
         if not args.no_browser:webbrowser.open(f'http://127.0.0.1:{args.port}')
@@ -518,10 +632,17 @@ def main():
         server.server_close()
         raise
     server.library = lib
+    server.lan = args.lan
+    server.allowed_origins = {o.rstrip('/') for o in args.allow_origin}
     lib.start_scan()
     threading.Thread(target=lib.auto_scan,daemon=True).start()
     url = f'http://127.0.0.1:{args.port}'
     print(f'爱妻的书屿已启动：{url}\n书库：{lib.root}\n自动扫描所有子目录和嵌套压缩包。关闭此窗口即可停止。',flush=True)
+    if server.allowed_origins:print('允许网页版访问：'+'，'.join(sorted(server.allowed_origins)),flush=True)
+    if args.lan:
+        addresses = '\n'.join(f'  http://{a}:{args.port}' for a in lan_addresses()) or '  （未检测到局域网地址）'
+        print(f'局域网地址：\n{addresses}',flush=True)
+    if not lib.access.password_set:print('尚未设置访问密码：请在本机页面「书库设置 → 网页版访问」中设置后，网页版才能登录。',flush=True)
     if not args.no_browser:threading.Timer(.6,lambda:webbrowser.open(url)).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass

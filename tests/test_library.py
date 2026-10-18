@@ -222,8 +222,9 @@ class HTTPTests(LibraryFixture,unittest.TestCase):
             self.assertEqual(ctx.exception.code,404);ctx.exception.close()
         with self.assertRaises(urllib.error.HTTPError) as ctx:self.post('/api/scan',{}, {'Origin':'https://evil.example'})
         self.assertEqual(ctx.exception.code,403);ctx.exception.close()
+        # A rebinding page never counts as the local machine and has no login token.
         with self.assertRaises(urllib.error.HTTPError) as ctx:self.get('/api/stats',{'Host':'evil.example'})
-        self.assertEqual(ctx.exception.code,403);ctx.exception.close()
+        self.assertEqual(ctx.exception.code,401);ctx.exception.close()
 
     def test_http_reveal_and_failure_details(self):
         book=self.book('夜航')

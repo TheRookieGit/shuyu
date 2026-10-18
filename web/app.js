@@ -3,6 +3,8 @@ const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const escapeHTML=(v='')=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icons={library:'<path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l4-1 4 15-4 1z"/>',folder:'<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',settings:'<path d="m10 3-1 3-3 1-2 3 1 3-1 3 2 3 3 1 1 2h4l1-2 3-1 2-3-1-3 1-3-2-3-3-1-1-3z"/><circle cx="12" cy="12" r="3"/>',refresh:'<path d="M20 10a8 8 0 0 0-14-5L3 8m0-5v5h5M4 14a8 8 0 0 0 14 5l3-3m0 5v-5h-5"/>',grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.1M3 12h.1M3 18h.1"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',file:'<path d="M14 2H5v20h14V7zM14 2v6h5M8 13h8M8 17h5"/>',image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 16-6-6-9 11"/>',open:'<path d="M7 17 17 7M7 7h10v10"/>'};
+icons.download='<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>';
+let session={local:true};
 const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]||icons.file}</svg>`;
 $$('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
 const state={q:'',kind:'',level:'',relationship:'',pairing:'',tag:'',publication:'',classification_status:'',sort:'modified',page:1,layout:localStorage.getItem('shuyu-layout')||'grid',request:0,stats:null};
@@ -11,7 +13,19 @@ const colors=[['#e4e8dd','#607153'],['#ede2d7','#8a7160'],['#e0e7e5','#617675'],
 const number=n=>new Intl.NumberFormat('zh-CN').format(n||0);
 const sizeText=n=>n>=1073741824?`${(n/1073741824).toFixed(1)} GB`:n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${Math.round(n/1024)} KB`:`${n} B`;
 const formatDate=n=>n?new Date(n*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'';
-async function api(path,data){const response=await fetch(path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw new Error(result.error||'操作未完成');return result;}
+// On GitHub Pages the catalog lives on the Windows backend; served by that backend itself, paths stay relative.
+const hostedPage=location.hostname.endsWith('.github.io');
+const store={get:key=>{try{return localStorage.getItem(key)||'';}catch{return '';}},set:(key,value)=>{try{value?localStorage.setItem(key,value):localStorage.removeItem(key);}catch{}}};
+const serverBase=()=>hostedPage?store.get('shuyu-server'):'';
+let signedIn;const authReady=new Promise(resolve=>signedIn=resolve);
+async function request(path,data){const headers={};const token=store.get('shuyu-token');if(token)headers.Authorization='Bearer '+token;if(data!==undefined)headers['Content-Type']='application/json';return fetch(serverBase()+path,data===undefined?(token?{headers}:{}):{method:'POST',headers,body:JSON.stringify(data)});}
+async function api(path,data){await authReady;const response=await request(path,data);if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}const result=await response.json();if(!response.ok)throw new Error(result.error||'操作未完成');return result;}
+function showLogin(message=''){const dialog=$('#login-dialog');$('#login-server-field').hidden=!hostedPage;$('#login-server').value=store.get('shuyu-server');$('#login-message').textContent=message||(hostedPage?'填写 Windows 电脑上书屿的网页版地址和访问密码。':'书库保存在 Windows 电脑上，输入访问密码后即可浏览、筛选并下载小说。');$('#login-message').classList.toggle('error-text',!!message);if(!dialog.open)dialog.showModal();}
+$('#login-dialog').addEventListener('cancel',event=>event.preventDefault());
+$('#login-form').onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;
+  try{if(hostedPage){const server=$('#login-server').value.trim().replace(/\/+$/,'');if(!/^https:\/\//.test(server))throw new Error('网页版地址需要以 https:// 开头。');store.set('shuyu-server',server);}
+    const response=await request('/api/login',{password:$('#login-password').value});const result=await response.json();if(!response.ok)throw new Error(result.error||'登录失败');store.set('shuyu-token',result.token);location.reload();}
+  catch(error){showLogin(error instanceof TypeError?'无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。':error.message);button.disabled=false;}};
 let toastTimer;
 function toast(message,error=false){const el=$('#toast');el.textContent=message;el.classList.toggle('error',error);el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,error?7000:3500);}
 function onError(error){console.error(error);toast(error.message||'连接已中断，请确认爱妻的书屿服务正在运行',true);}
@@ -46,7 +60,7 @@ async function openDetail(id,versionId){
     $('#detail-content').dataset.bookId=id;
     let chain=[];try{chain=JSON.parse(book.chain||'[]');}catch{}
     const archived=!!(chain.length||book.entry),versions=book.versions||[];
-    $('#detail-content').innerHTML=`<div class="detail-main"><button class="icon-button detail-close" data-close="detail-dialog" aria-label="关闭详情">×</button><div class="detail-cover">${coverHTML(book)}</div><div class="detail-info"><div class="eyebrow">A STORY IN YOUR LIBRARY</div><h2>${escapeHTML(book.title)}</h2><div class="detail-author">${escapeHTML(book.author||'作者未标注')}</div><div class="metadata-row"><span>${escapeHTML(formats[book.ext]||book.ext.slice(1).toUpperCase())}</span>${book.size?`<span>${sizeText(book.size)}</span>`:''}${book.image_count?`<span>${book.image_count} 张图片</span>`:''}</div><label class="field-label" for="book-version">书目版本 · ${versions.length+1} 个</label><select id="book-version" class="full-input">${versions.map(v=>`<option value="${v.id}">${escapeHTML(v.label)}</option>`).join('')}<option value="">原始版本</option></select><p id="version-info" class="field-help"></p><div class="detail-actions"><button id="system-open" class="button primary">${icon('open')}打开小说</button><button id="reveal-button" class="button secondary">${icon('folder')}定位小说</button>${archived?`<button id="reveal-original" class="button secondary">${icon('folder')}定位原压缩包</button>`:''}</div>${['.txt','.text','.md','.epub','.eqpub'].includes(book.ext)?'<button id="clean-book" class="button secondary">AI 清理 · 另建版本</button><button id="resume-clean" class="text-button" hidden>返回上次清理任务</button>':'<p class="field-help">AI 清理目前支持文本和 EPUB 格式。</p>'}${archived?'<p class="field-help">原始版本会自动从压缩包取出，原压缩包保持原样。</p>':''}<details class="source-details"><summary>查看原文件来源</summary><div class="detail-path">${escapeHTML(book.rel)}</div></details></div></div>`;
+    $('#detail-content').innerHTML=`<div class="detail-main"><button class="icon-button detail-close" data-close="detail-dialog" aria-label="关闭详情">×</button><div class="detail-cover">${coverHTML(book)}</div><div class="detail-info"><div class="eyebrow">A STORY IN YOUR LIBRARY</div><h2>${escapeHTML(book.title)}</h2><div class="detail-author">${escapeHTML(book.author||'作者未标注')}</div><div class="metadata-row"><span>${escapeHTML(formats[book.ext]||book.ext.slice(1).toUpperCase())}</span>${book.size?`<span>${sizeText(book.size)}</span>`:''}${book.image_count?`<span>${book.image_count} 张图片</span>`:''}</div><label class="field-label" for="book-version">书目版本 · ${versions.length+1} 个</label><select id="book-version" class="full-input">${versions.map(v=>`<option value="${v.id}">${escapeHTML(v.label)}</option>`).join('')}<option value="">原始版本</option></select><p id="version-info" class="field-help"></p><div class="detail-actions">${session.local?`<button id="system-open" class="button primary">${icon('open')}打开小说</button><button id="reveal-button" class="button secondary">${icon('folder')}定位小说</button>${archived?`<button id="reveal-original" class="button secondary">${icon('folder')}定位原压缩包</button>`:''}`:`<a id="download-book" class="button primary" href="#">${icon('download')}下载到这台电脑</a>`}</div>${['.txt','.text','.md','.epub','.eqpub'].includes(book.ext)?'<button id="clean-book" class="button secondary">AI 清理 · 另建版本</button><button id="resume-clean" class="text-button" hidden>返回上次清理任务</button>':'<p class="field-help">AI 清理目前支持文本和 EPUB 格式。</p>'}${archived?'<p class="field-help">原始版本会自动从压缩包取出，原压缩包保持原样。</p>':''}<details class="source-details"><summary>查看原文件来源</summary><div class="detail-path">${escapeHTML(book.rel)}</div></details></div></div>`;
     const copies=book.copies||[];if(copies.length>1){$('label[for="book-version"]').insertAdjacentHTML('beforebegin',`<label class="field-label" for="book-source">来源副本 · ${copies.length} 份</label><select id="book-source" class="full-input">${copies.map((copy,i)=>`<option value="${copy.id}">${copy.id===book.id?'当前 · ':''}${escapeHTML(copy.name)} · ${wordsText(copy.word_count)}${copy.cleaned_versions?` · ${copy.cleaned_versions} 个清理版`:''}</option>`).join('')}</select><p class="field-help">重复书目已合并展示；来源文件均保留，可切换后打开或定位。</p>`);$('#book-source').value=book.id;$('#book-source').onchange=()=>openDetail($('#book-source').value);}const select=$('#book-version');select.value=versionId===undefined?(versions[0]?.id||''):versionId;
     $('.metadata-row',$('#detail-content')).insertAdjacentHTML('afterend','<div id="book-classification"></div>');
     $('#version-info').insertAdjacentHTML('afterend','<div class="word-metrics"><strong id="version-words"></strong><button class="text-button" id="recount-words">重新统计字数</button></div><p id="word-count-help" class="field-help"></p>');
@@ -55,7 +69,8 @@ async function openDetail(id,versionId){
     $('#recount-words').onclick=()=>showVersionWords(book,select.value,true);
     const dialog=$('#detail-dialog');if(!dialog.open)dialog.showModal();dialog.scrollTop=0;
     function action(selector,path,data,success){$(selector).onclick=async()=>{const button=$(selector);button.disabled=true;const label=button.innerHTML;button.textContent='正在处理…';try{const result=await api(path,{id:book.id,version_id:select.value,...data});toast(success+(result.extracted?'（已自动解压）':''));}catch(error){onError(error);}finally{button.disabled=false;button.innerHTML=label;}};}
-    action('#system-open','/api/open',{},'已交给系统应用打开');action('#reveal-button','/api/reveal',{},'已选中小说文件');if(archived)action('#reveal-original','/api/reveal',{original:true},'已选中原压缩包');
+    if(session.local){action('#system-open','/api/open',{},'已交给系统应用打开');action('#reveal-button','/api/reveal',{},'已选中小说文件');if(archived)action('#reveal-original','/api/reveal',{original:true},'已选中原压缩包');}
+    else $('#download-book').onclick=async event=>{event.preventDefault();try{const result=await api('/api/download/ticket',{id:book.id,version_id:select.value});toast(archived?'正在从压缩包取出并下载…':'正在下载…');location.href=serverBase()+result.url;}catch(error){onError(error);}};
     if($('#clean-book')){
       $('#clean-book').onclick=()=>openCleanup(book,select.value);
       const last=JSON.parse(sessionStorage.getItem('shuyu-clean-task')||'null');
@@ -65,12 +80,28 @@ async function openDetail(id,versionId){
 }
 $('#detail-dialog').onclose=()=>{detailGeneration++;};
 document.addEventListener('click',event=>{const button=event.target.closest('[data-close]');if(button)$('#'+button.dataset.close).close();});
-$$('dialog').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close();}}));
-function settings(){$('#password-input').value='';$('#settings-dialog').showModal();}
+$$('dialog:not(#login-dialog)').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close();}}));
+function settings(){$('#password-input').value='';$('#remote-password-input').value='';renderRemoteAccess();$('#settings-dialog').showModal();}
+function renderRemoteAccess(){
+  $('#remote-access').hidden=false;$('#remote-local').hidden=!session.local;$('#remote-client').hidden=session.local;
+  if(!session.local)return;
+  const addresses=session.addresses||[];
+  const origins=session.origins||[];
+  $('#remote-help').innerHTML=`${session.password_set?'已设置访问密码，修改后所有网页版和其他电脑都需重新登录。':'<strong>尚未设置访问密码</strong>，设置后网页版才能登录。'}<br>${origins.length?`允许的网页版：<span class="remote-addresses">${origins.map(escapeHTML).join('<br>')}</span>`:'启动时未指定 --allow-origin，GitHub 网页版暂时无法连接。'}${addresses.length?`<br>局域网地址：<span class="remote-addresses">${addresses.map(escapeHTML).join('<br>')}</span>`:''}`;
+}
+$('#remote-password-save').onclick=async()=>{const button=$('#remote-password-save');button.disabled=true;try{await api('/api/access/password',{password:$('#remote-password-input').value});session=await api('/api/session');$('#remote-password-input').value='';renderRemoteAccess();toast('访问密码已保存');}catch(error){onError(error);}finally{button.disabled=false;}};
+$('#logout-button').onclick=async()=>{try{await api('/api/logout',{});}catch{}store.set('shuyu-token','');location.reload();};
 $('#settings-button').onclick=settings;$('#archive-password-settings').onclick=()=>{$('#issues-dialog').close();settings();$('#password-input').focus();};
 $('#settings-form').onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;const data={root:$('#root-input').value.trim()};if($('#password-input').value.trim())data.passwords=$('#password-input').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);try{await api('/api/settings',data);$('#settings-dialog').close();state.page=1;await refreshStats();await loadBooks();toast('设置已保存，正在自动处理');}catch(error){onError(error);}finally{button.disabled=false;}};
 $('#issues-button').onclick=async()=>{try{const result=await api('/api/issues');$('#issue-list').innerHTML=result.items.length?result.items.map(item=>`<div class="archive-issue"><strong>${escapeHTML(item.name.replaceAll('\\','/').split('/').at(-1))}</strong><p>${escapeHTML(item.message)}</p><small>${escapeHTML(item.source)}</small></div>`).join(''):'<p class="field-help">没有处理失败的压缩包。</p>';$('#archive-password-settings').hidden=!result.items.some(item=>item.code==='password');$('#issues-dialog').showModal();}catch(error){onError(error);}};
 document.addEventListener('keydown',event=>{if(event.target.matches('input,textarea,select'))return;if(event.key==='/'&&!$('dialog[open]')){event.preventDefault();$('#search-input').focus();}});
 let polling=false,previousScan=false,previousCount=-1;
 async function poll(){if(polling)return;polling=true;try{const stats=await refreshStats();if((previousScan||stats.scan.running||previousCount!==stats.total)&&!$('#detail-dialog').open)await loadBooks(false);if((previousScan||previousCount!==stats.total)&&typeof refreshFacets==='function')refreshFacets();previousScan=stats.scan.running;previousCount=stats.total;}catch{$('#scan-label').textContent='本地服务未连接';$('#scan-dot').classList.add('error');}finally{polling=false;}}
+(async()=>{
+  if(hostedPage&&!serverBase())return showLogin();
+  try{const response=await request('/api/session');if(!response.ok)throw new Error();session=await response.json();}
+  catch{return showLogin('无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。');}
+  if(!session.authenticated){store.set('shuyu-token','');return showLogin();}
+  signedIn();
+})();
 renderFilters();loadBooks();refreshStats().then(stats=>{previousScan=stats.scan.running;previousCount=stats.total;}).catch(onError);setInterval(poll,3500);

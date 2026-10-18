@@ -32,8 +32,8 @@ def code_fingerprint(base):
     return digest.hexdigest()
 
 
-def runtime_identity(base, data_dir):
-    return {'app': 'shuyu', 'protocol': 1, 'base': str(Path(base).resolve()),
+def runtime_identity(base, data_dir, host='127.0.0.1'):
+    return {'app': 'shuyu', 'protocol': 1, 'host': host, 'base': str(Path(base).resolve()),
             'data_dir': str(Path(data_dir).resolve()), 'fingerprint': code_fingerprint(base),
             'instance': uuid.uuid4().hex, 'pid': os.getpid()}
 
@@ -56,7 +56,8 @@ def reuse_or_reload(port, expected, root=None):
             any(os.path.normcase(current.get(key, '')) != os.path.normcase(expected[key]) for key in ['base', 'data_dir'])):
         raise SystemExit(f'端口 {port} 已被其他程序或另一份书库占用，请用 --port 指定其他端口。')
     root_matches = root is None or os.path.normcase(current.get('root', '')) == os.path.normcase(str(Path(root).resolve()))
-    if current.get('fingerprint') == expected['fingerprint'] and root_matches:
+    host_matches = current.get('host', '127.0.0.1') == expected.get('host', '127.0.0.1')
+    if current.get('fingerprint') == expected['fingerprint'] and root_matches and host_matches:
         return True
     request = urllib.request.Request(url+'/api/runtime/reload',
         data=json.dumps({'instance': current['instance']}).encode(),
@@ -82,14 +83,14 @@ def reuse_or_reload(port, expected, root=None):
 
 def bind_server(port, handler, identity, root=None):
     try:
-        server = AppHTTPServer(('127.0.0.1', port), handler)
+        server = AppHTTPServer((identity.get('host', '127.0.0.1'), port), handler)
     except OSError:
         if reuse_or_reload(port, identity, root):
             return None
         deadline = time.monotonic()+8
         while True:
             try:
-                server = AppHTTPServer(('127.0.0.1', port), handler)
+                server = AppHTTPServer((identity.get('host', '127.0.0.1'), port), handler)
                 break
             except OSError as exc:
                 if time.monotonic() >= deadline:
