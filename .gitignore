@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 test-results/
 node_modules/
+build_info.json
+build/
+dist/
+*.spec
