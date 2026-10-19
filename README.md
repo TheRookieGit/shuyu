@@ -142,7 +142,7 @@ Windows 保存的 API Key 通过当前用户的 DPAPI 加密，接口不会把 K
 ## 验证
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 node --check web/app.js
 # 可选：界面交互测试，仅开发时需要 Node.js
 npm ci

@@ -1,6 +1,7 @@
 import io
 import json
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -103,6 +104,9 @@ class WebAccessTests(LibraryFixture,unittest.TestCase):
         folder=next(item for item in self.lib.listing({'limit':100})['items'] if item['ext']=='folder')
         body,_=self.download(folder['id'])
         with zipfile.ZipFile(io.BytesIO(body)) as archive:self.assertEqual(sorted(archive.namelist()),['1.jpg','2.jpg'])
+        # The server removes the temporary ZIP just after the response finishes.
+        deadline=time.time()+5
+        while any((self.data/'downloads').iterdir()) and time.time()<deadline:time.sleep(.05)
         self.assertFalse(any((self.data/'downloads').iterdir()))
         self.assertEqual(self.status('/api/download?ticket=forged',remote=False),403)
 
