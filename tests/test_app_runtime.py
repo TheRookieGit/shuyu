@@ -24,7 +24,7 @@ class RuntimeTests(unittest.TestCase):
         self.server.runtime = self.identity
         self.progress = {'running': False}
         self.server.library = SimpleNamespace(root=str(self.base/'books'),
-            cleaner=SimpleNamespace(active=False),
+            cleaner=SimpleNamespace(active=False),auto=SimpleNamespace(running=False),
             classifier=SimpleNamespace(progress=lambda: self.progress))
         self.port = self.server.server_port
         def serve():

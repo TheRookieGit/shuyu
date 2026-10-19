@@ -425,3 +425,143 @@ main{padding:27px 18px 0}
 .login-dialog::backdrop{background:var(--bg)}
 .error-text{color:#a14b3c}
 .remote-addresses{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--ink);user-select:all;line-height:1.9}
+
+/* Wishlist: books to read that are not downloaded yet are drawn as dashed outlines. */
+.shelf-tabs{display:flex;align-items:center;gap:6px;margin-bottom:18px}
+.shelf-tab{padding:8px 15px;border-radius:20px;font-size:12px;color:var(--muted);border:1px solid transparent}
+.shelf-tab:hover{color:var(--green)}
+.shelf-tab.active{background:var(--green-soft);border-color:#dbe3d3;color:var(--green);font-weight:600}
+.shelf-tab small{font-weight:400;margin-left:2px}
+.wish-add{margin-left:auto}
+.wish-add svg{width:15px;height:15px}
+.catalog-layout.wish-mode{grid-template-columns:minmax(0,1fr)}
+.wish-mode .filter-panel,.wish-mode #mobile-filter-toggle,.wish-mode #sort-select,.wish-mode .classification-summary,.wish-mode .active-filters{display:none!important}
+.wish-mode .book-grid:not(.list-view){grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.book-cover.wish-cover{background:transparent;border:1.5px dashed #b7c3ae;box-shadow:none;color:#7d8c74}
+.book-cover.wish-cover:before{display:none}
+.book-cover.wish-cover:after{border-style:dashed;opacity:.25}
+.wish-cover .format-badge{background:#eef2e9}
+.wish-card.downloaded .wish-cover{border-style:solid;border-color:#d5ddce;background:#f3f6ef;color:#58705a}
+.wish-card .card-title{color:#6c7c63}
+.wish-note{font-size:10px;color:var(--muted);line-height:1.7;margin:6px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.wish-link{display:inline-flex;align-items:center;gap:4px;margin-top:7px;font-size:11px;color:var(--green);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+.wish-link svg{width:13px;height:13px}
+.wish-edit{padding:4px 0}
+.wish-kinds{display:flex;flex-wrap:wrap;gap:8px 18px}
+.wish-kinds input{accent-color:var(--green);width:16px;height:16px}
+.wish-actions{align-items:center;flex-wrap:wrap}
+#wish-delete{margin-left:auto;color:#a1694f}
+.download-link-panel{margin-top:6px}
+.link-row{display:flex;gap:8px}
+.link-row .full-input{flex:1;min-width:0}
+.auto-clean-note{font-size:11px;line-height:1.8;color:#5f7457;background:var(--green-soft);border-radius:6px;padding:9px 12px;margin:0 0 14px}
+#auto-clean-section{margin-top:22px}
+.auto-clean-recent{display:grid;gap:2px;margin:-6px 0 14px}
+.auto-clean-item{display:grid;gap:2px;text-align:left;padding:8px 10px;border-radius:6px;font-size:11px;line-height:1.6}
+.auto-clean-item:hover{background:var(--green-soft)}
+.auto-clean-item span{color:var(--muted);font-size:10px}
+.mobile-nav,.sheet-backdrop,.filter-sheet-footer{display:none}
+
+/* Phones: one-hand layout with a bottom navigation bar and bottom-sheet filters. */
+@media(max-width:760px){
+  body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  body.sheet-open{overflow:hidden}
+  main{padding:0 14px}
+  .catalog-shell .topbar{position:sticky;top:0;z-index:30;min-height:0;height:56px;padding:0 14px;flex-wrap:nowrap;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .catalog-shell .brand{gap:8px}
+  .catalog-shell .brand img{width:28px;height:28px}
+  .catalog-shell .brand>span{font-size:18px;letter-spacing:2px}
+  .catalog-shell .brand small{display:none}
+  .catalog-shell .top-actions{gap:4px}
+  #scan-button{width:38px;height:38px;padding:0;border-radius:50%}
+  #scan-button span:last-child{display:none}
+  #settings-button{display:none}
+  #issues-button{max-width:70px}
+  .page-heading,.page-footer{display:none}
+  .catalog-overview{margin:12px 0 10px;padding:10px 14px;gap:10px;border-radius:10px;flex-wrap:nowrap}
+  .catalog-overview .stat-item{min-width:0;gap:8px}
+  .catalog-overview .stat-icon{display:none}
+  .catalog-overview .stat-item>div>span{display:none}
+  .catalog-overview .stat-item strong{font-size:20px;margin:0}
+  .catalog-overview .scan-summary{margin-left:auto;min-width:0;text-align:right}
+  .catalog-overview .scan-summary small{display:none}
+  .catalog-search{position:sticky;top:56px;z-index:25;margin:0 -14px 12px;padding:8px 14px;background:var(--bg);border-bottom:0}
+  .catalog-search .search-field{min-height:44px;height:44px;border-radius:22px}
+  /* 16px inputs keep iOS Safari from zooming in on focus. */
+  .catalog-search .search-field input,.full-input,textarea,select,.publication-fields input,.publication-fields select,.clean-options-row select{font-size:16px}
+  .catalog-search .view-toggle button{width:36px;height:36px}
+  .shelf-tabs{margin:0 0 10px;overflow-x:auto;scrollbar-width:none}
+  .shelf-tab{flex-shrink:0;padding:9px 14px;font-size:13px}
+  .wish-add{padding:9px 13px}
+  .shelf-results .shelf-heading{padding-bottom:10px;margin-bottom:10px;min-height:0}
+  .shelf-heading h2{font-size:15px}
+  .shelf-heading select{font-size:12px;padding:8px 10px;max-width:130px}
+  .shelf-results .classification-summary{font-size:10px;margin-bottom:10px}
+  #mobile-filter-toggle{display:none!important}
+  .selected-filter{padding:7px 12px;font-size:12px}
+  .catalog-layout .book-grid:not(.list-view),.wish-mode .book-grid:not(.list-view){grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 10px}
+  .book-cover{padding:12px 8px 14px 12px}
+  .book-cover:after{inset:7px 6px 7px 10px}
+  .book-cover:before{left:4px}
+  .cover-decoration,.cover-seal{display:none}
+  .cover-title{font-size:14px;letter-spacing:1px;line-height:1.55;-webkit-line-clamp:4}
+  .cover-author{font-size:9px;margin-top:8px}
+  .format-badge{font-size:7px;top:6px;left:9px;padding:2px 4px}
+  .card-info{padding-top:7px}
+  .card-title{font-size:12px;-webkit-line-clamp:2}
+  .card-meta{font-size:10px}
+  .book-classification{gap:3px;margin:6px 0}
+  .class-pill{font-size:9px;padding:2px 4px}
+  .source-badge,.version-badge{font-size:9px}
+  .wish-note{display:none}
+  .book-grid.list-view{padding:0 12px}
+  .list-view .book-card{gap:12px;padding:12px 0}
+  .list-view .card-title{font-size:14px}
+  .pagination{gap:4px;margin:24px 0 8px;flex-wrap:wrap}
+  .pagination button{min-width:40px;height:40px;font-size:13px}
+  .cover-button:hover .book-cover{transform:none}
+  /* Filters slide up from the bottom; the footer button closes them. */
+  .filter-panel,.wish-mode .filter-panel{display:block!important;position:fixed;z-index:70;left:0;right:0;bottom:0;top:auto;max-height:82dvh;margin:0;padding:6px 20px 0;border:0;border-radius:18px 18px 0 0;background:var(--paper);box-shadow:0 -10px 40px #1c302833;transform:translateY(105%);transition:transform .25s ease;visibility:hidden}
+  .filter-panel.open{transform:none;visibility:visible}
+  .filter-panel:before{content:"";display:block;width:38px;height:4px;border-radius:2px;background:#d9dfd3;margin:4px auto 10px}
+  .filter-option{padding:10px 0;font-size:14px}
+  .filter-option input{width:20px;height:20px}
+  .filter-group legend{font-size:13px}
+  .filter-sheet-footer{display:block;position:sticky;bottom:0;margin:0 -20px;padding:12px 20px calc(12px + env(safe-area-inset-bottom));background:var(--paper);border-top:1px solid var(--line)}
+  .filter-sheet-footer .button{width:100%;min-height:46px;font-size:14px}
+  .sheet-backdrop{display:block;position:fixed;inset:0;z-index:65;background:#1c30284d}
+  .sheet-backdrop[hidden]{display:none!important}
+  .mobile-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;z-index:60;left:0;right:0;bottom:0;padding:0 6px env(safe-area-inset-bottom);background:color-mix(in srgb,var(--paper) 94%,transparent);backdrop-filter:blur(12px);border-top:1px solid var(--line)}
+  .mobile-nav button{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;height:60px;font-size:11px;color:var(--muted)}
+  .mobile-nav button svg{width:22px;height:22px}
+  .mobile-nav button.active{color:var(--green);font-weight:600}
+  .mobile-nav b{position:absolute;top:7px;left:calc(50% + 6px);min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--green);color:#fff;font-size:10px;line-height:17px}
+  .toast{bottom:calc(76px + env(safe-area-inset-bottom))}
+  /* Dialogs become full-screen pages with comfortable tap targets. */
+  dialog,.detail-dialog,.settings-dialog,.clean-dialog,.wish-dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0}
+  .login-dialog{height:auto;max-height:100dvh;margin:auto;width:calc(100vw - 32px);border-radius:12px}
+  .settings-dialog,.clean-dialog{padding:18px 18px calc(24px + env(safe-area-inset-bottom))}
+  .dialog-heading{position:sticky;top:-18px;z-index:2;margin:-18px -18px 6px;padding:12px 18px;background:#fafbf6;border-bottom:1px solid var(--line)}
+  .dialog-heading h2{font-size:20px;margin-top:4px}
+  .dialog-heading .icon-button,.detail-close{width:42px;height:42px;font-size:24px}
+  /* The small cover floats beside the title; everything from the classification down uses the full width. */
+  .catalog-shell .detail-main,.detail-main{display:block;padding:56px 16px calc(24px + env(safe-area-inset-bottom))}
+  .detail-cover{float:left;width:86px;margin:0 14px 10px 0;padding:0}
+  .catalog-shell .detail-info{padding-top:0}
+  #book-classification~*{clear:both}
+  .detail-close{position:fixed;top:8px;right:8px;z-index:5;background:#fafbf6}
+  .detail-cover .book-cover{min-height:0}
+  .detail-cover .cover-title{font-size:13px}
+  .detail-info h2{font-size:19px;margin:0 0 4px}
+  .catalog-shell .detail-actions,.detail-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0}
+  .catalog-shell .detail-actions .button,.detail-actions .button{min-height:46px;font-size:13px;white-space:normal}
+  .detail-actions .button:only-child{grid-column:1/-1}
+  #clean-book{width:100%;min-height:44px}
+  .button-row{flex-wrap:wrap}
+  .button-row .button{min-height:44px;flex:1 1 auto}
+  .check-line{font-size:14px;min-height:36px}
+  .patch-comparison pre{font-size:14px}
+  .link-row .button{min-height:44px}
+}
+@media(max-width:760px) and (hover:none){.button:hover{transform:none}}
+@media(max-width:360px){.catalog-layout .book-grid:not(.list-view),.wish-mode .book-grid:not(.list-view){grid-template-columns:repeat(2,minmax(0,1fr))}}

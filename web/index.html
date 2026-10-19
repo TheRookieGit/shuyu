@@ -11,6 +11,7 @@
   <script defer src="app.js"></script>
   <script defer src="ai.js"></script>
   <script defer src="classification.js"></script>
+  <script defer src="wishlist.js"></script>
 </head>
 <body>
   <div class="catalog-shell">
@@ -25,18 +26,21 @@
         <div class="toolbar catalog-search"><label class="search-field"><span data-icon="search"></span><input id="search-input" placeholder="搜索书名、作者，找到下一个故事…" autocomplete="off"><kbd>/</kbd><button id="clear-search" class="icon-button" aria-label="清空搜索" hidden>×</button></label><div class="view-toggle" role="group" aria-label="显示方式"><button class="active icon-button" data-layout="grid" aria-label="封面视图"><span data-icon="grid"></span></button><button class="icon-button" data-layout="list" aria-label="列表视图"><span data-icon="list"></span></button></div></div>
         <div class="catalog-layout">
         <button id="mobile-filter-toggle" class="button secondary" aria-expanded="false" aria-controls="filter-panel">筛选小说</button>
-        <aside id="filter-panel" class="filter-panel" aria-label="筛选小说"><div class="filter-panel-heading"><span>FILTERS <small>筛选</small></span><button id="reset-filters" class="text-button" hidden>清除</button></div><p class="filter-hint">同组多选满足其一，组间同时满足。数量为去重后的全库书目。</p><div id="filter-options"></div><div id="kind-filters"></div><label class="filter-option pending-filter"><input type="checkbox" data-filter="classification_status" value="pending"><span>只看分类不完整</span></label></aside>
-        <div class="shelf-results"><div class="shelf-heading"><div><h2>全部小说</h2><span id="result-count">正在整理书架…</span></div><select id="sort-select" aria-label="排序"><option value="modified">文件更新时间</option><option value="added">最近发现</option><option value="title">书名排序</option><option value="size">文件大小</option><option value="words">字数从多到少</option></select></div>
+        <aside id="filter-panel" class="filter-panel" aria-label="筛选小说"><div class="filter-panel-heading"><span>FILTERS <small>筛选</small></span><button id="reset-filters" class="text-button" hidden>清除</button></div><p class="filter-hint">同组多选满足其一，组间同时满足。数量为去重后的全库书目。</p><div id="filter-options"></div><div id="kind-filters"></div><label class="filter-option pending-filter"><input type="checkbox" data-filter="classification_status" value="pending"><span>只看分类不完整</span></label><div class="filter-sheet-footer"><button id="filter-done" class="button primary" type="button">查看结果</button></div></aside>
+        <div class="shelf-results"><div class="shelf-tabs" role="tablist" aria-label="书架视图"><button class="shelf-tab active" data-view="shelf" role="tab" aria-selected="true">全部小说</button><button class="shelf-tab" data-view="wish" role="tab" aria-selected="false">想看 · 未下载<small id="wish-count"></small></button><button id="wish-add" class="button primary wish-add" type="button" hidden><span data-icon="plus"></span><span>添加想看</span></button></div><div class="shelf-heading"><div><h2 id="shelf-title">全部小说</h2><span id="result-count">正在整理书架…</span></div><select id="sort-select" aria-label="排序"><option value="modified">文件更新时间</option><option value="added">最近发现</option><option value="title">书名排序</option><option value="size">文件大小</option><option value="words">字数从多到少</option></select></div>
         <div class="classification-summary"><span id="classification-summary">正在读取分类进度…</span><button id="classification-settings-button" class="text-button">分类与字数</button></div>
         <div id="active-filters" class="active-filters" aria-label="已选筛选条件"></div>
         <div id="library-error" class="notice" role="status" hidden></div>
         <div id="book-grid" class="book-grid" aria-live="polite"></div>
         <div id="empty-state" class="empty-state" hidden><span data-icon="library"></span><h3>没有找到这本小说</h3><p>换个关键词，或等待书库扫描完成。</p><button id="empty-action" class="button secondary">查看全部小说</button></div>
+        <div id="wish-empty" class="empty-state" hidden><span data-icon="heart"></span><h3>还没有想看的书</h3><p>把准备看、还没下载的小说、文件夹或压缩包记下来，可以附上下载地址。下载到书库后会自动对上。</p><button id="wish-empty-add" class="button primary">添加想看</button></div>
         <div class="pagination" id="pagination"></div>
         </div></div>
       </section>
       <footer class="page-footer"><span><img src="favicon.svg" alt="">爱妻的书屿 · 每个故事，都能找到。</span><span>本地索引 · 每 5 分钟自动扫描</span></footer>
     </main>
+    <nav id="mobile-nav" class="mobile-nav" aria-label="手机导航"><button data-mobile="shelf" class="active" type="button"><span data-icon="library"></span><span>书架</span></button><button data-mobile="wish" type="button"><span data-icon="heart"></span><span>想看</span></button><button data-mobile="filter" type="button"><span data-icon="filter"></span><span>筛选</span><b id="mobile-filter-count" hidden></b></button><button data-mobile="settings" type="button"><span data-icon="settings"></span><span>设置</span></button></nav>
+    <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   </div>
   <dialog id="detail-dialog" class="detail-dialog"><div id="detail-content"></div></dialog>
   <dialog id="classification-dialog" class="settings-dialog"><div class="dialog-heading"><div><div class="eyebrow">YOUR BOOK TAXONOMY</div><h2>分类与字数</h2></div><button class="icon-button" data-close="classification-dialog" aria-label="关闭">×</button></div><p class="field-help">第一分类：清水 / 肉文。第二分类：BL / GL / GB / BG（1v1、np）/ 大女主（女主无 CP）。题材可多选。</p><p id="classification-progress" role="status"></p><p class="field-help">本地整理读取简介、已有标记和文字特征，不调用 Claude。缺少依据的项目保留待确认；本地推断会标注待核验，可在书目详情修正。</p><div class="button-row"><button class="button primary" id="classification-start">整理新增 / 未统计书目</button><button class="button secondary" id="classification-retry">重试读取受限书目</button><button class="button secondary" id="classification-stop" hidden>停止后续整理</button></div><p class="field-help">字数按文件中的文字和数字计数，不含标点、空白，原有附注计入。清理版独立计字。漫画及扫描 PDF 无法直接计字。</p><p id="classification-error" class="notice" hidden></p></dialog>
@@ -50,11 +54,12 @@
     <div class="dialog-heading"><div><div class="eyebrow">YOUR LOCAL LIBRARY</div><h2>书库设置</h2></div><button class="icon-button" data-close="settings-dialog" aria-label="关闭">×</button></div>
     <form id="settings-form"><label class="field-label" for="root-input">书库位置</label><input id="root-input" class="full-input" required placeholder="例如 Z:\老婆小说漫画"><p class="field-help">包含所有子目录，压缩包会自动逐层处理。原文件保持原样。</p><label class="field-label" for="password-input">解压密码（加密压缩包才需要）</label><textarea id="password-input" rows="3" placeholder="有通用密码时可填写，每行一个。留空保持现有设置。" autocomplete="off" spellcheck="false"></textarea><p id="password-help" class="field-help">程序会自动尝试这些密码，无需手动解压。密码仅保存在本机。</p><button class="button primary" type="submit">保存并自动扫描</button></form>
     <div class="settings-divider"></div><button id="ai-settings-button" class="button secondary" type="button">Claude AI 设置</button><p class="field-help">Haiku 5.5 · 生成清理建议，确认后另存为同一本书的新版本。</p>
+    <div id="auto-clean-section"><h3>新增小说自动清理</h3><label class="check-line"><input id="auto-clean-enabled" type="checkbox">书库里新增 TXT / EPUB 后自动 AI 清理</label><p class="field-help">检查作者有话说 / 广告、乱码修复、屏蔽字推测，优先检查疑似片段，自动识别编码。只自动采用默认勾选的高置信度作者话 / 广告删除，另存为「自动清理版」，原文件不动；乱码和屏蔽字建议留在任务里，等你在书目详情确认。会占用所选 Claude 方式的用量；开启前已有的书不会被批量清理。</p><p id="auto-clean-status" class="field-help" role="status"></p><div id="auto-clean-recent" class="auto-clean-recent"></div><button id="auto-clean-retry" class="button secondary" type="button" hidden>重试失败的书</button></div>
     <div id="remote-access" hidden><div class="settings-divider"></div><h3>网页版访问</h3>
       <div id="remote-local"><label class="field-label" for="remote-password-input">网页版访问密码</label><input id="remote-password-input" class="full-input" type="password" minlength="6" autocomplete="new-password" placeholder="至少 6 个字符"><p id="remote-help" class="field-help"></p><button id="remote-password-save" class="button secondary" type="button">保存访问密码</button></div>
       <div id="remote-client"><p class="field-help">正在使用网页版。书库文件保存在 Windows 电脑上；打开和定位只能在那台电脑上进行，这里可以直接下载小说。</p><button id="logout-button" class="button secondary" type="button">退出登录</button></div>
     </div>
-    <div class="format-help"><span data-icon="info"></span><p>管理小说目录、内容分类和题材 tag，不记录阅读历史、状态、收藏或笔记。打开和定位包内小说时，会自动取出选中的文件；「定位原压缩包」可查看原始来源。</p></div>
+    <div class="format-help"><span data-icon="info"></span><p>管理小说目录、内容分类和题材 tag，不记录阅读历史、阅读状态或笔记；想看清单只记下还没下载的书和下载地址。打开和定位包内小说时，会自动取出选中的文件；「定位原压缩包」可查看原始来源。</p></div>
   </dialog>
   <dialog id="issues-dialog" class="settings-dialog issues-dialog"><div class="dialog-heading"><div><div class="eyebrow">ARCHIVE PROCESSING</div><h2>压缩包处理结果</h2></div><button class="icon-button" data-close="issues-dialog" aria-label="关闭">×</button></div><p class="field-help">正常的压缩包会自动展开，下面只列出无法完成的具体原因。</p><div id="issue-list"></div><div class="button-row"><button class="button secondary" id="retry-archives">自动重试</button><button class="button primary" id="archive-password-settings">填写解压密码</button></div></dialog>
   <dialog id="ai-settings-dialog" class="settings-dialog">
@@ -92,6 +97,17 @@
       <div id="clean-patches"></div><div id="clean-pages" class="pagination"></div>
       <div id="clean-save-panel" hidden><div class="button-row"><button id="clean-none" class="text-button">全部取消选择</button><span id="clean-selection" class="field-help"></span></div><label class="field-label" for="clean-label">新版本名称（可选）</label><input id="clean-label" class="full-input" maxlength="80" placeholder="例如：去作者话 · 保留屏蔽字"><button id="clean-save" class="button primary">另存为新版本</button></div>
     </section>
+  </dialog>
+  <dialog id="wish-dialog" class="settings-dialog wish-dialog">
+    <div class="dialog-heading"><div><div class="eyebrow">WISHLIST · 想看</div><h2 id="wish-dialog-title">添加想看</h2></div><button class="icon-button" data-close="wish-dialog" aria-label="关闭">×</button></div>
+    <form id="wish-form"><label class="field-label" for="wish-name">书名 / 文件夹名 / 压缩包名</label><input id="wish-name" class="full-input" required maxlength="200" autocomplete="off">
+      <label class="field-label" for="wish-author">作者（可选）</label><input id="wish-author" class="full-input" maxlength="100" autocomplete="off">
+      <span class="field-label">类型</span><div class="wish-kinds"><label class="check-line"><input type="radio" name="wish-kind" value="novel" checked>小说文件</label><label class="check-line"><input type="radio" name="wish-kind" value="folder">文件夹</label><label class="check-line"><input type="radio" name="wish-kind" value="zip">ZIP 压缩包</label></div>
+      <label class="field-label" for="wish-url">下载地址（可选）</label><input id="wish-url" class="full-input" type="url" placeholder="https://" autocomplete="off" spellcheck="false">
+      <label class="field-label" for="wish-note">备注（可选）</label><textarea id="wish-note" rows="2" maxlength="1000"></textarea>
+      <p class="field-help">下载到 Windows 书库后，书名、文件夹名或压缩包名相同的书会自动标为已下载，下载地址也会带到这本书上。</p>
+      <p id="wish-error" class="notice" hidden></p>
+      <div class="button-row wish-actions"><button class="button primary" type="submit">保存</button><a id="wish-open-url" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>打开下载地址 ↗</a><button id="wish-delete" class="text-button" type="button" hidden>删除</button></div></form>
   </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>

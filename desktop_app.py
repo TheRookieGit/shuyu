@@ -151,7 +151,7 @@ class Updater:
 
     def busy(self):
         lib = self.service.library
-        return lib.cleaner.active or lib.classifier.progress()['running'] or lib.scan_state['running']
+        return lib.cleaner.active or lib.auto.running or lib.classifier.progress()['running'] or lib.scan_state['running']
 
     def check(self,manual=False):
         if not FROZEN or not self.current:

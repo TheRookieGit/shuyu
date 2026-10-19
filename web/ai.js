@@ -75,3 +75,22 @@ $('#clean-save').onclick=async()=>{
   try{const version=await api('/api/clean/save',{job_id:cleaning.job.id,selected:[...cleaning.selected],label:$('#clean-label').value});$('#clean-dialog').close();await loadBooks(false);await openDetail(version.book_id,version.id);toast(`已新建「${version.label}」，原文件和已有版本均保留`);}catch(error){cleanError(error);}finally{button.disabled=false;}
 };
 $('#clean-dialog').addEventListener('close',()=>clearTimeout(cleaning.timer));
+const autoStates={queued:'等待',running:'正在清理',saved:'已生成清理版',review:'有建议待确认',clean:'无需清理',failed:'失败'};
+async function renderAutoClean(){
+  try{const data=await api('/api/auto-clean');const counts=data.counts;
+    $('#auto-clean-enabled').checked=data.enabled;
+    const parts=Object.entries(autoStates).filter(([key])=>counts[key]).map(([key,label])=>`${label} ${number(counts[key])}`);
+    $('#auto-clean-status').textContent=(data.enabled?(parts.length?parts.join(' · '):'已开启，还没有新增小说。'):'已关闭，新增小说不会自动发送给 Claude。')+(data.blocked?' · '+data.blocked:'');
+    $('#auto-clean-status').classList.toggle('error-text',!!data.blocked);
+    $('#auto-clean-recent').innerHTML=data.recent.map(item=>`<button class="auto-clean-item" data-detail-id="${item.book_id}" type="button"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.label)}${item.message?' · '+escapeHTML(item.message):''}</span></button>`).join('');
+    $('#auto-clean-retry').hidden=!counts.failed;
+  }catch(error){$('#auto-clean-status').textContent=error.message;}
+}
+$('#auto-clean-enabled').onchange=async event=>{try{await api('/api/auto-clean/config',{enabled:event.target.checked});await renderAutoClean();toast(event.target.checked?'已开启：之后新增的小说会自动清理':'已关闭新增小说自动清理');}catch(error){onError(error);}};
+$('#auto-clean-retry').onclick=async()=>{try{await api('/api/auto-clean/retry',{});await renderAutoClean();toast('失败的书已重新排队');}catch(error){onError(error);}};
+$('#auto-clean-recent').onclick=event=>{const item=event.target.closest('[data-detail-id]');if(item){$('#settings-dialog').close();openDetail(item.dataset.detailId);}};
+function renderBookAutoClean(book){
+  const value=book.auto_clean;if(!value)return;
+  $('#version-info').insertAdjacentHTML('afterend',`<p class="auto-clean-note"><strong>自动清理 · ${escapeHTML(value.label)}</strong>${value.message?' · '+escapeHTML(value.message):''}${value.job_id&&value.status!=='running'?' <button id="auto-clean-review" class="text-button" type="button">查看清理任务</button>':''}</p>`);
+  if($('#auto-clean-review'))$('#auto-clean-review').onclick=()=>{cleaning.book=book;resumeCleanup(value.job_id);};
+}

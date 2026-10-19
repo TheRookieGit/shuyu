@@ -27,6 +27,8 @@ from book_classification import Classifier, TAXONOMY
 from app_runtime import bind_server, runtime_identity
 from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_ago
 from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, lan_addresses
+from wishlist import Wishlist
+from auto_clean import AutoCleaner
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -53,7 +55,9 @@ def metadata(name):
 
 
 class Library:
-    def __init__(self,data_dir,root=None,interval=300):
+    def __init__(self,data_dir,root=None,interval=300,background=False):
+        # background: after each scan, also count new books locally and queue them for automatic cleanup.
+        self.background = background
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True,exist_ok=True)
         self.db_path = self.data_dir/'library.sqlite3'
@@ -98,6 +102,8 @@ class Library:
         self.organizer = CatalogOrganizer(self)
         self.organizer.refresh()
         self.access = RemoteAccess(self)
+        self.wishlist = Wishlist(self)
+        self.auto = AutoCleaner(self)
 
     @contextmanager
     def db(self):
@@ -245,12 +251,24 @@ class Library:
                 self.scan_state['error'] = f'有 {len(errors)} 处暂时无法读取，已保留原有索引。'
             self.scan_state['phase'] = '合并重复书目'
             self.organizer.refresh()
+            self.wishlist.match()
+            if self.background:
+                self.after_scan()
             self.scan_state['last_scan'] = time.time()
         except Exception as exc:
             self.scan_state['error'] = str(exc)
         finally:
             self.scan_state.update(running=False,phase='')
             self.scan_lock.release()
+
+    def after_scan(self):
+        with self.db() as db:
+            uncounted = db.execute('''SELECT 1 FROM books b WHERE b.root=? AND b.missing=0 AND b.kind<>'archive'
+              AND NOT EXISTS (SELECT 1 FROM book_text_metrics m WHERE m.book_id=b.id AND m.version_id='') LIMIT 1''',(self.root,)).fetchone()
+        if uncounted:
+            # Local only, never Claude: new books get word counts and classification without a manual click.
+            self.classifier.start()
+        self.auto.enqueue()
 
     def auto_scan(self):
         while True:
@@ -270,6 +288,8 @@ class Library:
         book['text_metrics'] = self.classifier.metrics(uid)
         book['copies'] = self.organizer.copies(uid)
         book['publication'] = self.organizer.publication(uid)
+        book['download_url'] = self.wishlist.link(uid)
+        book['auto_clean'] = self.auto.record(uid)
         return book
 
     def versions(self,uid):
@@ -405,7 +425,7 @@ class Library:
     def settings(self,data):
         if self.classifier.progress()['running']:
             raise UserError('分类和字数统计正在进行，请完成或停止后再切换书库。')
-        if self.cleaner.active:
+        if self.cleaner.active or self.auto.running:
             raise UserError('AI 任务正在处理，请完成或停止后再切换书库。')
         if self.scan_state['running']:
             raise UserError('扫描正在进行，请完成后再修改设置。')
@@ -423,7 +443,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
-    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/wishlist.js':'wishlist.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/open','/api/reveal','/api/access/password'}
@@ -541,6 +561,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status())
             if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
             if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
+            if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items(query.get('q','')))
+            if url.path=='/api/auto-clean':return self.json(self.lib.auto.status())
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
             if url.path=='/api/download':
                 try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
@@ -585,12 +607,21 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/runtime/reload' and hasattr(self.server,'runtime'):
                 if data.get('instance')!=self.server.runtime['instance']:
                     return self.json({'error':'后台服务已变化，请重新启动。'},409)
-                if self.lib.cleaner.active or self.lib.classifier.progress()['running']:
+                if self.lib.cleaner.active or self.lib.auto.running or self.lib.classifier.progress()['running']:
                     return self.json({'error':'AI 或分类任务正在进行，请完成或停止后再重新启动爱妻的书屿。'},409)
                 self.json({'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start()
                 return
-            if self.path=='/api/ai/config':return self.json(self.lib.cleaner.configure(data))
+            if self.path=='/api/ai/config':
+                config = self.lib.cleaner.configure(data)
+                self.lib.auto.blocked = ''
+                self.lib.auto.wake.set()
+                return self.json(config)
+            if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
+            if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(str(data.get('id',''))))
+            if self.path=='/api/book/link':return self.json(self.lib.wishlist.set_link(data['id'],data.get('url','')))
+            if self.path=='/api/auto-clean/config':return self.json(self.lib.auto.configure(data))
+            if self.path=='/api/auto-clean/retry':return self.json(self.lib.auto.retry())
             if self.path=='/api/classification/start':return self.json(self.lib.classifier.start(bool(data.get('force')),str(data.get('mode','missing'))))
             if self.path=='/api/classification/stop':
                 self.lib.classifier.stop.set();return self.json({'ok':True})
@@ -642,7 +673,7 @@ def start(args):
     if server is None:
         return None
     try:
-        lib = Library(args.data_dir,args.root)
+        lib = Library(args.data_dir,args.root,background=True)
     except BaseException:
         server.server_close()
         raise
@@ -650,6 +681,7 @@ def start(args):
     server.lan = args.lan
     server.allowed_origins = {o.rstrip('/') for o in args.allow_origin}
     lib.start_scan()
+    lib.auto.start()
     threading.Thread(target=lib.auto_scan,daemon=True).start()
     return server
 
