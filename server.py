@@ -12,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -425,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
     STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
     # These act on the Windows machine itself, so other computers may not call them.
-    LOCAL_ONLY = {'/api/runtime/reload','/api/open','/api/reveal','/api/access/password'}
+    LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/open','/api/reveal','/api/access/password'}
     FORWARDED = ('X-Forwarded-For','Forwarded','Cf-Connecting-Ip','X-Real-Ip','Tailscale-User-Login')
 
     @property
@@ -577,6 +578,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/access/password':
                 self.lib.access.set_password(data.get('password'))
                 return self.json({'ok':True})
+            if self.path=='/api/app/show':
+                if not callable(getattr(self.server,'on_show',None)):return self.json({'ok':False})
+                self.server.on_show()
+                return self.json({'ok':True})
             if self.path=='/api/runtime/reload' and hasattr(self.server,'runtime'):
                 if data.get('instance')!=self.server.runtime['instance']:
                     return self.json({'error':'后台服务已变化，请重新启动。'},409)
@@ -612,20 +617,30 @@ class Handler(BaseHTTPRequestHandler):
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc)},400)
 
 
-def main():
+def default_data_dir():
+    # The packaged app keeps data per Windows user, so replacing the app folder keeps the library.
+    if getattr(sys,'frozen',False):
+        return Path(os.environ.get('LOCALAPPDATA') or Path.home())/'AiqiShuyu'
+    return BASE/'.data'
+
+
+def build_parser():
     parser = argparse.ArgumentParser(description='爱妻的书屿 · 小说目录')
     parser.add_argument('--root',help='书库目录')
     parser.add_argument('--port',type=int,default=8765)
-    parser.add_argument('--data-dir',default=str(BASE/'.data'))
+    parser.add_argument('--data-dir',default=str(default_data_dir()))
     parser.add_argument('--no-browser',action='store_true')
     parser.add_argument('--lan',action='store_true',help='同时监听局域网，其他电脑可直接用 IP 地址登录访问')
     parser.add_argument('--allow-origin',action='append',default=[],help='允许调用后台的网页来源，例如 https://用户名.github.io（可重复）')
-    args = parser.parse_args()
+    return parser
+
+
+def start(args):
+    """Bind and load the library; None when a matching instance already serves this port."""
     identity = runtime_identity(BASE,args.data_dir,'0.0.0.0' if args.lan else '127.0.0.1')
     server = bind_server(args.port,Handler,identity,args.root)
     if server is None:
-        if not args.no_browser:webbrowser.open(f'http://127.0.0.1:{args.port}')
-        return
+        return None
     try:
         lib = Library(args.data_dir,args.root)
     except BaseException:
@@ -636,7 +651,17 @@ def main():
     server.allowed_origins = {o.rstrip('/') for o in args.allow_origin}
     lib.start_scan()
     threading.Thread(target=lib.auto_scan,daemon=True).start()
+    return server
+
+
+def main():
+    args = build_parser().parse_args()
+    server = start(args)
     url = f'http://127.0.0.1:{args.port}'
+    if server is None:
+        if not args.no_browser:webbrowser.open(url)
+        return
+    lib = server.library
     print(f'爱妻的书屿已启动：{url}\n书库：{lib.root}\n自动扫描所有子目录和嵌套压缩包。关闭此窗口即可停止。',flush=True)
     if server.allowed_origins:print('允许网页版访问：'+'，'.join(sorted(server.allowed_origins)),flush=True)
     if args.lan:
