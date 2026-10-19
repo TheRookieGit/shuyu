@@ -1,6 +1,7 @@
 import unittest
 
-from tests.test_library import LibraryFixture
+from catalog_tree import readable
+from tests.test_library import LibraryFixture, packed
 
 
 class CatalogTreeTests(LibraryFixture,unittest.TestCase):
@@ -30,5 +31,15 @@ class CatalogTreeTests(LibraryFixture,unittest.TestCase):
         self.assertEqual((counts['total'],counts['unique']),(9,8),'same title and author is merged')
         self.assertEqual(self.lib.tree.node(['重复'])['books'][0]['canonical'],self.book('夜航')['id'])
 
+
+    def test_zip_names_without_the_utf8_flag_are_readable(self):
+        # Stored as cp437 text, the way many Windows and macOS tools write UTF-8 names without the flag.
+        unflagged='套娃合集.zip'.encode('utf-8').decode('cp437')
+        (self.root/'外层.zip').write_bytes(packed({unflagged:packed({'书.txt':'内容'.encode()})}))
+        self.scan()
+        self.assertEqual([c['name'] for c in self.lib.tree.node(['外层.zip'])['children']],['套娃合集.zip'])
+        self.assertEqual(self.lib.tree.node(['外层.zip','套娃合集.zip'])['books'][0]['title'],'书')
+        self.assertEqual(readable('Café.txt'),'Café.txt')
+        self.assertEqual(readable('普通名字'),'普通名字')
 
 if __name__=='__main__':unittest.main()

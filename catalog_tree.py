@@ -8,11 +8,27 @@ from archive_engine import ARCHIVES
 BOOK_LIMIT = 200
 
 
+def readable(name):
+    """Archive paths are stored as the ZIP spells them; names without the UTF-8 flag read as cp437, so show the intended text."""
+    try:
+        raw = name.encode('cp437')
+    except UnicodeEncodeError:
+        return name
+    for encoding in ('utf-8','gb18030','big5'):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    # A name cut off in the middle of a character still reads, with the broken character marked.
+    lossy = raw.decode('gb18030',errors='replace')
+    return lossy if lossy.count('�')<=2 and any('一'<=c<='鿿' for c in lossy) else name
+
+
 def segments(book):
     """Folders, archives and folders inside archives leading to the book; the last item is the book itself."""
     parts = [p for p in (book['container'] or book['rel'].split('::')[0]).split('/') if p]
     for member in json.loads(book['chain'] or '[]'):
-        parts.extend(p for p in member.replace('\\','/').split('/') if p)
+        parts.extend(readable(p) for p in member.replace('\\','/').split('/') if p)
     return parts
 
 
