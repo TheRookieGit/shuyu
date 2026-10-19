@@ -16,14 +16,17 @@ const formatDate=n=>n?new Date(n*1000).toLocaleString('zh-CN',{month:'2-digit',d
 // On GitHub Pages the catalog lives on the Windows backend; served by that backend itself, paths stay relative.
 const hostedPage=location.hostname.endsWith('.github.io');
 const store={get:key=>{try{return localStorage.getItem(key)||'';}catch{return '';}},set:(key,value)=>{try{value?localStorage.setItem(key,value):localStorage.removeItem(key);}catch{}}};
-const serverBase=()=>hostedPage?store.get('shuyu-server'):'';
+// The Windows backend's Tailscale Funnel address; a device only needs to type one if it was changed on the login page.
+const DEFAULT_SERVER='https://windows.tailc0b5f5.ts.net';
+const serverBase=()=>hostedPage?store.get('shuyu-server')||DEFAULT_SERVER:'';
 let signedIn;const authReady=new Promise(resolve=>signedIn=resolve);
 async function request(path,data){const headers={};const token=store.get('shuyu-token');if(token)headers.Authorization='Bearer '+token;if(data!==undefined)headers['Content-Type']='application/json';return fetch(serverBase()+path,data===undefined?(token?{headers}:{}):{method:'POST',headers,body:JSON.stringify(data)});}
 async function api(path,data){await authReady;const response=await request(path,data);if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}const result=await response.json();if(!response.ok)throw new Error(result.error||'操作未完成');return result;}
-function showLogin(message=''){const dialog=$('#login-dialog');$('#login-server-field').hidden=!hostedPage;$('#login-server').value=store.get('shuyu-server');$('#login-message').textContent=message||(hostedPage?'填写 Windows 电脑上书屿的网页版地址和访问密码。':'书库保存在 Windows 电脑上，输入访问密码后即可浏览、筛选并下载小说。');$('#login-message').classList.toggle('error-text',!!message);if(!dialog.open)dialog.showModal();}
+function showLogin(message=''){const dialog=$('#login-dialog');const unreachable=message.startsWith('无法连接');$('#login-server-field').hidden=!hostedPage||!(unreachable||store.get('shuyu-server'));$('#login-change-server').hidden=!hostedPage||!$('#login-server-field').hidden;$('#login-server').value=serverBase();$('#login-message').textContent=message||(hostedPage?'输入访问密码登录。这台设备之后会保持登录。':'书库保存在 Windows 电脑上，输入访问密码后即可浏览、筛选并下载小说。');$('#login-message').classList.toggle('error-text',!!message);if(!dialog.open)dialog.showModal();}
 $('#login-dialog').addEventListener('cancel',event=>event.preventDefault());
+$('#login-change-server').onclick=()=>{$('#login-server-field').hidden=false;$('#login-change-server').hidden=true;$('#login-server').focus();};
 $('#login-form').onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;
-  try{if(hostedPage){const server=$('#login-server').value.trim().replace(/\/+$/,'');if(!/^https:\/\//.test(server))throw new Error('网页版地址需要以 https:// 开头。');store.set('shuyu-server',server);}
+  try{if(hostedPage){const server=$('#login-server').value.trim().replace(/\/+$/,'');if(!/^https:\/\//.test(server))throw new Error('网页版地址需要以 https:// 开头。');store.set('shuyu-server',server===DEFAULT_SERVER?'':server);}
     const response=await request('/api/login',{password:$('#login-password').value});const result=await response.json();if(!response.ok)throw new Error(result.error||'登录失败');store.set('shuyu-token',result.token);location.reload();}
   catch(error){showLogin(error instanceof TypeError?'无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。':error.message);button.disabled=false;}};
 let toastTimer;
@@ -98,7 +101,6 @@ document.addEventListener('keydown',event=>{if(event.target.matches('input,texta
 let polling=false,previousScan=false,previousCount=-1;
 async function poll(){if(polling)return;polling=true;try{const stats=await refreshStats();if((previousScan||stats.scan.running||previousCount!==stats.total)&&!$('#detail-dialog').open)await loadBooks(false);if((previousScan||previousCount!==stats.total)&&typeof refreshFacets==='function')refreshFacets();previousScan=stats.scan.running;previousCount=stats.total;}catch{$('#scan-label').textContent='本地服务未连接';$('#scan-dot').classList.add('error');}finally{polling=false;}}
 (async()=>{
-  if(hostedPage&&!serverBase())return showLogin();
   try{const response=await request('/api/session');if(!response.ok)throw new Error();session=await response.json();}
   catch{return showLogin('无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。');}
   if(!session.authenticated){store.set('shuyu-token','');return showLogin();}

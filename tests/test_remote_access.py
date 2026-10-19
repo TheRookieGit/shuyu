@@ -116,6 +116,16 @@ class WebAccessTests(LibraryFixture,unittest.TestCase):
         self.assertEqual(self.status('/api/download?ticket='+ticket,remote=False),200)
         self.assertEqual(self.status('/api/download?ticket='+ticket,remote=False),403)
 
+    def test_sessions_in_use_keep_renewing(self):
+        self.lib.access.set_password('secret-1');self.login('secret-1')
+        digest=self.lib.access._digest(self.token)
+        with self.lib.db() as db:db.execute('UPDATE sessions SET expires=? WHERE token_hash=?',(time.time()+3600,digest))
+        self.assertEqual(self.status('/api/books'),200)
+        with self.lib.db() as db:expires=db.execute('SELECT expires FROM sessions WHERE token_hash=?',(digest,)).fetchone()[0]
+        self.assertGreater(expires,time.time()+300*86400)
+        with self.lib.db() as db:db.execute('UPDATE sessions SET expires=? WHERE token_hash=?',(time.time()-1,digest))
+        self.assertEqual(self.status('/api/books'),401)
+
     def test_repeated_wrong_passwords_lock_out(self):
         self.lib.access.set_password('secret-1')
         for _ in range(5):self.assertEqual(self.status('/api/login',{'password':'nope-nope'}),403)

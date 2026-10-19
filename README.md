@@ -44,7 +44,8 @@ GitHub Pages 只托管 `web/` 中的静态页面，不包含任何书目数据�
    - 安装 [Tailscale](https://tailscale.com/download) 并登录；在 Tailscale 管理后台开启 HTTPS 证书和 Funnel。
    - 在命令行运行一次：`tailscale funnel --bg 8765`。`--bg` 会让 Funnel 在重启后继续生效。
    - 记下输出的地址，例如 `https://windows-pc.tail1234.ts.net`，它就是「网页版地址」。
-3. 在任意设备打开网页版，填写网页版地址和访问密码登录。登录状态在这台设备上保留 30 天。
+3. 把这个地址写进 `web/app.js` 的 `DEFAULT_SERVER` 并推送，网页版就不需要在设备上填写地址；只有连不上时才显示地址栏，也可以在登录页点「更换网页版地址」。
+4. 在任意设备打开网页版，输入访问密码登录。每台设备只需登录一次：只要一年内用过，登录状态就会自动续期。
 
 也可以使用 Cloudflare Tunnel 等其他 HTTPS 隧道，只要把流量转发到 `http://localhost:8765` 即可。网页版运行在 HTTPS 上，所以后台地址也必须是 HTTPS。
 

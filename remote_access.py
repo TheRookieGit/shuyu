@@ -8,7 +8,7 @@ import socket
 import threading
 import time
 
-SESSION_DAYS = 30
+SESSION_DAYS = 365
 ITERATIONS = 600_000
 LOCAL_HOSTS = {'127.0.0.1', 'localhost', '[::1]'}
 
@@ -111,9 +111,15 @@ class RemoteAccess:
     def valid(self, token):
         if not token:
             return False
+        now = time.time()
         with self.lib.db() as db:
             row = db.execute('SELECT expires FROM sessions WHERE token_hash=?', (self._digest(token),)).fetchone()
-        return bool(row) and row[0] > time.time()
+            if not row or row[0] <= now:
+                return False
+            # Sliding expiry: a device that keeps using the page never has to sign in again.
+            if row[0] < now+(SESSION_DAYS-1)*86400:
+                db.execute('UPDATE sessions SET expires=? WHERE token_hash=?', (now+SESSION_DAYS*86400, self._digest(token)))
+        return True
 
     def ticket(self, book_id, version_id=''):
         """A short-lived single-use link, because a browser download cannot carry the login header."""
