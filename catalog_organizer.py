@@ -176,6 +176,8 @@ class CatalogOrganizer:
                         db.execute('DELETE FROM book_publication WHERE book_id=? AND reviewed=0',(row['id'],))
                         self.record_publication(db,row)
             self.cache.clear()
+            # Folder counts follow new scans and regrouped duplicates.
+            if hasattr(self.lib,'tree'):self.lib.tree.invalidate()
             return {'sources':len(rows),'books':len(groups),'merged':len(changes)}
 
     def facets(self):

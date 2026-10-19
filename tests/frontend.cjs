@@ -25,7 +25,7 @@ async function run(){
   w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close=function(){if(!this.open)return;this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   // One evaluation shares the lexical environment, as two classic scripts do in a browser.
-  w.eval(['app.js','ai.js','classification.js','wishlist.js'].map(file=>readFileSync(path.join(root,'web',file),'utf8')).join('\n'));
+  w.eval(['app.js','ai.js','classification.js','wishlist.js','tree.js'].map(file=>readFileSync(path.join(root,'web',file),'utf8')).join('\n'));
   await waitFor(()=>d.querySelectorAll('.book-card:not(.skeleton)').length===8,'flat library');
   await waitFor(()=>$('#stat-total').textContent.includes('8'),'statistics');
   for(const selector of ['#sidebar','#reader','#continue-banner','.favorite-button','#main-nav','#import-file'])assert.equal($(selector),null,selector+' removed');
@@ -183,6 +183,21 @@ async function run(){
   $('#filter-done').click();assert.ok($('#sheet-backdrop').hidden);$('#reset-filters').click();
   $('[data-mobile="wish"]').click();await waitFor(()=>d.querySelectorAll('.wish-card').length===1,'phone navigation to wishlist');
   $('[data-mobile="shelf"]').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'phone navigation to shelf');
+  $('#tree-button').click();await waitFor(()=>$('#tree-dialog').open&&d.querySelector('[data-tree-path]'),'folder tree');
+  assert.match($('#tree-summary').textContent,/去重后 8 本/);
+  const treeRow=name=>[...d.querySelectorAll('[data-tree-path]')].find(el=>JSON.parse(el.dataset.treePath).at(-1)===name);
+  assert.match(treeRow('合集.zip').textContent,/3 本/);
+  treeRow('合集.zip').click();await waitFor(()=>treeRow('第一层'),'expand archive');
+  assert.ok([...d.querySelectorAll('[data-tree-book]')].some(el=>el.textContent.includes('故事')),'books directly inside the archive');
+  treeRow('第一层').click();await waitFor(()=>treeRow('第二层.zip'),'folder inside archive');
+  treeRow('第二层.zip').click();await waitFor(()=>treeRow('深一层.zip'),'nested archive');
+  treeRow('深一层.zip').click();await waitFor(()=>treeRow('书'),'third archive level');
+  treeRow('书').click();await waitFor(()=>[...d.querySelectorAll('[data-tree-book]')].some(el=>el.textContent.includes('夜航')),'deepest novel');
+  treeRow('合集.zip').click();assert.ok(treeRow('合集.zip').parentElement.querySelector('.tree-children').hidden,'collapse');
+  treeRow('合集.zip').click();[...d.querySelectorAll('[data-tree-book]')].find(el=>el.textContent.includes('夜航')).click();
+  await waitFor(()=>$('#detail-dialog').open&&$('.detail-info h2').textContent==='夜航','open a book from the tree');
+  $('[data-close="detail-dialog"]').click();$('[data-close="tree-dialog"]').click();
+  console.log('PASS folder tree counts, nested archives, expand/collapse and opening a book from the tree');
   console.log('PASS wishlist dashed cards, download addresses, wish matching, auto-clean status and phone navigation');
   assert.ok(!requests.some(r=>/\/api\/(update|progress|export|import)/.test(r.url)),'no activity or annotation writes');
   assert.deepEqual(errors,[],'no frontend runtime errors');

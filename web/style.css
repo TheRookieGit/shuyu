@@ -565,3 +565,33 @@ main{padding:27px 18px 0}
 }
 @media(max-width:760px) and (hover:none){.button:hover{transform:none}}
 @media(max-width:360px){.catalog-layout .book-grid:not(.list-view),.wish-mode .book-grid:not(.list-view){grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Folder tree: counts per folder and archive, expanded one level at a time. */
+.tree-dialog{width:min(820px,94vw)}
+.tree,.tree-children{list-style:none;margin:0;padding:0}
+.tree{border-top:1px solid var(--line);margin-top:6px}
+.tree-row,.tree-book button{display:grid;grid-template-columns:16px 20px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;text-align:left;padding:9px 10px 9px calc(10px + min(var(--depth),10)*18px);border-bottom:1px solid #eef1ea;position:relative;font-size:13px;color:var(--ink)}
+.tree-row:hover:not(:disabled),.tree-book button:hover{background:var(--green-soft)}
+.tree-row:disabled{opacity:1;cursor:default}
+.tree-caret{color:var(--muted);font-size:11px;transition:transform .15s;justify-self:center}
+.tree-node[aria-expanded="true"]>.tree-row .tree-caret{transform:rotate(90deg)}
+.tree-icon{display:flex;color:#7f916e}
+.tree-icon svg{width:17px;height:17px}
+.tree-icon.archive{color:#a2805d}
+.tree-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-count{font-size:11px;color:var(--muted);white-space:nowrap;display:flex;align-items:baseline;gap:6px}
+.tree-count strong{font-size:13px;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.tree-count small{font-size:10px}
+.tree-bar{position:absolute;left:calc(10px + min(var(--depth),10)*18px);bottom:-1px;height:2px;width:calc(var(--share)*.6);max-width:60%;background:#c9d6be;border-radius:1px}
+.tree-book button{color:#5d6f57;font-size:12px}
+.tree-more{padding:9px 10px 9px calc(46px + min(var(--depth),10)*18px);font-size:11px;color:var(--muted);border-bottom:1px solid #eef1ea}
+#tree-summary .remote-addresses{overflow-wrap:anywhere}
+@media(max-width:760px){
+  .tree-dialog{width:100vw}
+  #tree-button{width:38px;height:38px;padding:0;border-radius:50%}
+  #tree-button span:last-child{display:none}
+  .tree-row,.tree-book button{grid-template-columns:14px 18px minmax(0,1fr);padding:11px 8px 11px calc(6px + min(var(--depth),6)*12px);row-gap:2px}
+  .tree-count{grid-column:3}
+  .tree-bar{left:calc(6px + min(var(--depth),6)*12px)}
+  .tree-more{padding-left:calc(40px + min(var(--depth),6)*12px)}
+}

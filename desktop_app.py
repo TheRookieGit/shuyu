@@ -26,6 +26,8 @@ WEB_ORIGIN = 'https://therookiegit.github.io'
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 RUN_VALUE = 'AiqiShuyu'
 UPDATE_INTERVAL = 600
+# A scan can be interrupted safely, so a pending update waits for one only this long.
+SCAN_WAIT = 900
 BUNDLE = Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
 ICON = BUNDLE/'assets'/'shuyu.ico'
 FROZEN = getattr(sys,'frozen',False)
@@ -148,10 +150,19 @@ class Updater:
         self.current = build_info().get('sha','')
         self.wake = threading.Event()
         self.status = '尚未检查更新' if self.current else '开发版本，不自动更新'
+        self.waiting_since = None
+        self.pending = False
 
     def busy(self):
         lib = self.service.library
-        return lib.cleaner.active or lib.auto.running or lib.classifier.progress()['running'] or lib.scan_state['running']
+        if lib.cleaner.active or lib.auto.running or lib.classifier.progress()['running']:
+            return True
+        # A big library is scanned every few minutes; back-to-back scans must not hold an update forever.
+        if lib.scan_state['running']:
+            self.waiting_since = self.waiting_since or time.time()
+            return time.time()-self.waiting_since<SCAN_WAIT
+        self.waiting_since = None
+        return False
 
     def check(self,manual=False):
         if not FROZEN or not self.current:
@@ -169,6 +180,7 @@ class Updater:
             return
         if self.busy():
             self.status = '有新版本，等待扫描或 AI 任务完成后更新'
+            self.pending = True
             if manual:self.notify(self.status)
             return
         self.status = '正在下载新版本…'
@@ -186,8 +198,10 @@ class Updater:
         while True:
             manual = self.wake.is_set()
             self.wake.clear()
+            self.pending = False
             self.check(manual)
-            self.wake.wait(UPDATE_INTERVAL)
+            # While an update waits for a task, look again every minute instead of every ten.
+            self.wake.wait(60 if self.pending else UPDATE_INTERVAL)
 
 
 # Main -----------------------------------------------------------------------------------------

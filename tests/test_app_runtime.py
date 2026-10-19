@@ -100,4 +100,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotEqual(second,code_fingerprint(self.base))
 
 
+
+class UpdaterWaitTests(unittest.TestCase):
+    def test_scans_delay_an_update_only_for_a_while_but_ai_tasks_block_it(self):
+        import desktop_app
+        lib=SimpleNamespace(cleaner=SimpleNamespace(active=False),auto=SimpleNamespace(running=False),
+            classifier=SimpleNamespace(progress=lambda:{'running':False}),scan_state={'running':True})
+        updater=desktop_app.Updater(SimpleNamespace(library=lib),'.',print,lambda:None)
+        self.assertTrue(updater.busy(),'a scan that just started is waited for')
+        updater.waiting_since-=desktop_app.SCAN_WAIT+1
+        self.assertFalse(updater.busy(),'back-to-back scans no longer hold the update')
+        lib.cleaner.active=True
+        self.assertTrue(updater.busy(),'an AI cleanup is never interrupted')
+
+
 if __name__=='__main__':unittest.main()

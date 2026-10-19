@@ -29,6 +29,7 @@ from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_a
 from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, lan_addresses
 from wishlist import Wishlist
 from auto_clean import AutoCleaner
+from catalog_tree import CatalogTree
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -104,6 +105,7 @@ class Library:
         self.access = RemoteAccess(self)
         self.wishlist = Wishlist(self)
         self.auto = AutoCleaner(self)
+        self.tree = CatalogTree(self)
 
     @contextmanager
     def db(self):
@@ -443,7 +445,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
-    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/wishlist.js':'wishlist.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/wishlist.js':'wishlist.js','/tree.js':'tree.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/open','/api/reveal','/api/access/password'}
@@ -563,6 +565,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items(query.get('q','')))
             if url.path=='/api/auto-clean':return self.json(self.lib.auto.status())
+            if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
             if url.path=='/api/download':
                 try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
