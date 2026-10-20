@@ -230,6 +230,8 @@ function renderJob(job){
 const groupOrder=['author_note','garbled','censored','custom'];
 const groupHints={author_note:'删除作者有话说、求票和站点广告。',garbled:'修复乱码，默认不勾选，建议展开看看。',censored:'根据上下文推测屏蔽字，不能保证是原文，默认不勾选，建议逐条核对。',custom:'按你的要求修改。'};
 function renderGroups(job){
+  // A Windows backend that has not updated yet sends no groups: list its first suggestions one by one instead.
+  if(!job.groups){$('#patches').innerHTML=(job.patch_total?'<p class="notice">Windows 电脑上的书屿还没更新到最新版本，暂时只逐条显示前几项建议；更新后会按类别合并显示。</p>':'')+job.patches.map(patchHTML).join('');return;}
   const kinds=groupOrder.filter(kind=>job.groups?.[kind]?.total);
   $('#patches').innerHTML=kinds.map(kind=>`<section class="group" data-group="${kind}"><div class="group-head"><input type="checkbox" data-group-check="${kind}" aria-label="全选${names[kind]}"><button class="group-toggle" type="button" data-group-toggle="${kind}" aria-expanded="${lite.open.has(kind)}"><strong>${names[kind]}</strong><span data-group-count="${kind}"></span><span class="caret" aria-hidden="true">▸</span></button></div><p class="hint">${groupHints[kind]}</p><div class="group-body" data-group-body="${kind}" ${lite.open.has(kind)?'':'hidden'}></div></section>`).join('')||'<p class="hint">暂时没有修改建议。</p>';
   kinds.filter(kind=>lite.open.has(kind)).forEach(kind=>loadGroup(kind));
