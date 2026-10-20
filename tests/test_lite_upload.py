@@ -12,7 +12,7 @@ from ai_cleaner import ClaudeClient, CleanError, Document
 from auto_clean import AutoCleaner
 from lite_upload import UPLOAD_FOLDER
 from server import Handler, ThreadingHTTPServer
-from tests.test_library import LibraryFixture
+from tests.test_library import LibraryFixture, packed
 
 
 TEXT='第一章 回家\n她走进图□馆。\n作者有话说：谢谢支持！\n第二章 出发\n'
@@ -63,6 +63,23 @@ class LiteUploadTests(LibraryFixture,unittest.TestCase):
         self.assertEqual(downloaded[0],path)
         self.assertNotIn('作者有话说',Document(downloaded[1]).text);self.assertIn('图书馆',Document(downloaded[1]).text)
 
+    def test_title_and_author_are_read_from_the_file_unless_edited(self):
+        heading='书名：《长河落日》\n作者：大漠\n\n第一章\n正文。\n'.encode('gb18030')
+        book=self.lib.uploads.save(heading,'新建文本文档.txt')
+        self.assertEqual((book['title'],book['author']),('长河落日','大漠'))
+        self.assertEqual(book['name'],'《长河落日》作者：大漠【lite上传】.txt')
+        named=self.lib.uploads.save(heading,'【精校】《孤烟》作者：边塞.txt')
+        self.assertEqual((named['title'],named['author']),('孤烟','边塞'),'a file name that names the book wins')
+        edited=self.lib.uploads.save(heading,'新建文本文档.txt','长河',author='')
+        self.assertEqual(edited['name'],'《长河》【lite上传】.txt','an edited field is kept as typed, even empty')
+        plain=self.lib.uploads.save('第一章\n正文。'.encode(),'001 春水.txt')
+        self.assertEqual((plain['title'],plain['author']),('001 春水',''))
+        container=b'<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>'
+        opf='<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>大江东去</dc:title><dc:creator>东坡</dc:creator></metadata><manifest><item id="c" href="c.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/></spine></package>'.encode()
+        chapter='<html xmlns="http://www.w3.org/1999/xhtml"><body><p>正文。</p></body></html>'.encode()
+        epub=self.lib.uploads.save(packed({'mimetype':b'application/epub+zip','META-INF/container.xml':container,'OEBPS/content.opf':opf,'OEBPS/c.xhtml':chapter}),'book.epub')
+        self.assertEqual(epub['name'],'《大江东去》作者：东坡【lite上传】.epub')
+
     def test_automatic_cleanup_leaves_uploads_to_lite(self):
         self.lib.auto._store({'enabled':True,'since':0})
         self.lib.uploads.save(TEXT.encode(),'a.txt','上传的书','')
@@ -87,6 +104,8 @@ class LiteUploadTests(LibraryFixture,unittest.TestCase):
             book=upload(TEXT.encode(),name='《夜雨》作者：某人.txt',title='夜雨',author='某人')
             self.assertEqual(book['name'],'《夜雨》作者：某人【lite上传】.txt')
             with self.assertRaises(urllib.error.HTTPError) as caught:upload(b'x',name='a.exe',title='书')
+            detected=upload('书名：秋声\n作者：欧阳\n正文。'.encode(),name='a.txt',author='')
+            self.assertEqual(detected['name'],'《秋声》【lite上传】.txt','missing title detected, blank author kept blank')
             with caught.exception as error:self.assertEqual(error.code,400);self.assertIn('TXT',json.load(error)['error'])
         finally:server.shutdown();server.server_close();thread.join()
 

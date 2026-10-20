@@ -42,11 +42,14 @@
           </div>
           <form id="upload-form" hidden>
             <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub" required><span id="upload-file-name">选择 TXT、MD 或 EPUB 文件（64 MB 以内）</span></label>
-            <div class="options">
-              <label>书名<input id="upload-title" maxlength="60" required autocomplete="off"></label>
-              <label>作者（可选）<input id="upload-author" maxlength="30" autocomplete="off"></label>
+            <div id="upload-names" hidden>
+              <p id="upload-detected" class="hint"></p>
+              <div class="options">
+                <label>书名<input id="upload-title" maxlength="60" autocomplete="off"></label>
+                <label>作者<input id="upload-author" maxlength="30" autocomplete="off"></label>
+              </div>
             </div>
-            <p id="upload-preview" class="hint">上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】。完整版书屿里也能看到这本书。</p>
+            <p class="hint">书名和作者会从文件名和书里自动识别。上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到这本书。</p>
             <p id="upload-error" class="notice" hidden></p>
             <button class="button primary" type="submit">上传到 Windows 书库</button>
           </form>

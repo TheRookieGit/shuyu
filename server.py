@@ -31,6 +31,7 @@ from wishlist import Wishlist
 from auto_clean import AutoCleaner
 from catalog_tree import CatalogTree
 from lite_upload import Uploads
+from book_names import metadata
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -48,19 +49,6 @@ UPSERT_BOOK = '''INSERT INTO books
 
 class UserError(Exception):
     pass
-
-
-def metadata(name):
-    stem = Path(name).stem
-    author = ''
-    match = re.search(r'(?:作者[：:\s]*|\s+[bB][yY]\s*)([^（(\[【]+)',stem)
-    if match:
-        author = match.group(1).strip(' _-')[:100]
-    match = re.search(r'《(.+?)》',stem)
-    title = match.group(1) if match else re.sub(r'^[\[【].*?[\]】]\s*','',stem)
-    if not match:
-        title = re.split(r'作者[：:]|\s+[bB][yY]\s+',title)[0]
-    return title.strip() or stem,author
 
 
 class Library:
@@ -572,12 +560,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def upload(self):
         # The file is the raw request body; its name, title and author come in the query string.
-        query = {k:v[-1] for k,v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
+        query = {k:v[-1] for k,v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True).items()}
         try:
             length = int(self.headers.get('Content-Length','0'))
             if not 0<length<=MAX_SOURCE:raise UserError('只能上传 64 MB 以内的文件。')
             raw = self.rfile.read(length)
-            return self.json(self.lib.uploads.save(raw,query.get('name',''),query.get('title',''),query.get('author','')))
+            # A missing title or author is read from the file itself; an empty one is what the reader chose.
+            return self.json(self.lib.uploads.save(raw,query.get('name',''),query.get('title'),query.get('author')))
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except (UserError,CleanError,OSError,ValueError) as exc:self.json({'error':str(exc)},400)
 

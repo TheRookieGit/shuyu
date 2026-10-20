@@ -76,28 +76,51 @@ $('.source-tabs').onclick=event=>{const tab=event.target.closest('[data-source]'
   $('#library-source').hidden=tab.dataset.source!=='library';$('#upload-form').hidden=tab.dataset.source!=='upload';};
 
 // Or upload one: it is saved into the Windows library and then processed like any other book.
-// Same reading of 《书名》作者：某人 file names as the backend, so the fields start out filled in.
-function guessName(name){
+// The same rules as book_names.py on the backend, so what is shown here is what gets saved.
+// Only a field the reader edits is sent; the backend reads the rest from the file itself.
+function nameFromFile(name){
   const stem=name.replace(/\.[^.]+$/,''),titled=stem.match(/《(.+?)》/);
   const author=((stem.match(/(?:作者[：:\s]*|\s+by\s*)([^（(\[【]+)/i)||[])[1]||'').replace(/^[\s_-]+|[\s_-]+$/g,'');
   const title=titled?titled[1]:stem.replace(/^[\[【].*?[\]】]\s*/,'').split(/作者[：:]|\s+by\s+/i)[0];
-  return {title:title.trim()||stem,author};
+  return {title:title.trim()||stem,author,explicit:!!titled};
 }
-$('#upload-file').onchange=()=>{
-  const file=$('#upload-file').files[0];$('#upload-error').hidden=true;if(!file)return;
+function nameFromText(text){
+  let title='',author='',match;
+  for(const line of text.slice(0,3000).split(/\r?\n/).filter(line=>line.trim()).slice(0,30)){
+    if(!title&&(match=line.match(/^\s*(?:书名|标题|作品名称?|小说名称?)\s*[：:]\s*《?(.+?)》?\s*$/)||line.match(/^\s*《(.+?)》/)))title=match[1].trim();
+    if(!author&&(match=line.match(/作者\s*[：:]\s*([^\s（(\[【]+)/)))author=match[1].trim();
+  }
+  return {title,author};
+}
+async function readOpening(file){
+  const bytes=new Uint8Array(await file.slice(0,65536).arrayBuffer());
+  if(bytes[0]===0xff&&bytes[1]===0xfe||bytes[0]===0xfe&&bytes[1]===0xff)return new TextDecoder('utf-16').decode(bytes);
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:true});}catch{return new TextDecoder('gb18030').decode(bytes);}
+}
+$('#upload-file').onchange=async()=>{
+  const file=$('#upload-file').files[0];$('#upload-error').hidden=true;$('#upload-names').hidden=!file;if(!file)return;
   $('#upload-file-name').textContent=`${file.name} · ${(file.size/1048576).toFixed(1)} MB`;
-  const guess=guessName(file.name);$('#upload-title').value=guess.title;$('#upload-author').value=guess.author;
+  for(const input of [$('#upload-title'),$('#upload-author')]){input.value='';delete input.dataset.edited;}
+  const named=nameFromFile(file.name),epub=/\.epub$/i.test(file.name);
+  let inner={title:'',author:''};if(!epub)try{inner=nameFromText(await readOpening(file));}catch{}
+  if(file!==$('#upload-file').files[0])return;
+  // An EPUB's own title and author are read on the Windows side when the file name does not name the book.
+  $('#upload-title').value=named.explicit?named.title:epub?'':inner.title||named.title;
+  $('#upload-author').value=named.author||inner.author;
+  $('#upload-title').placeholder=$('#upload-author').placeholder=epub?'上传时读取电子书里的信息':'没有识别到';
+  $('#upload-detected').textContent=epub&&!named.explicit?'书名和作者会在上传时从电子书里读取；需要的话可以直接填写。':'已自动识别，可以直接上传；需要的话可以修改。';
 };
+for(const input of [$('#upload-title'),$('#upload-author')])input.oninput=()=>{input.dataset.edited='1';};
 $('#upload-form').onsubmit=async event=>{
   event.preventDefault();const file=$('#upload-file').files[0],button=$('button[type="submit"]',event.target);$('#upload-error').hidden=true;
   const fail=message=>{$('#upload-error').textContent=message;$('#upload-error').hidden=false;};
   if(!file)return fail('请选择要上传的小说文件。');
   if(!/\.(txt|md|epub)$/i.test(file.name))return fail('只能上传 TXT、MD 或 EPUB 小说。');
   if(file.size>64*1024*1024)return fail('只能上传 64 MB 以内的文件。');
-  if(!$('#upload-title').value.trim())return fail('请填写书名。');
+  if('edited' in $('#upload-title').dataset&&!$('#upload-title').value.trim())return fail('请填写书名。');
   button.disabled=true;button.textContent='正在上传到 Windows 书库…';
-  try{const book=await api('/api/lite/upload?'+new URLSearchParams({name:file.name,title:$('#upload-title').value.trim(),author:$('#upload-author').value.trim()}),undefined,file);
-    $('#upload-form').reset();$('#upload-file-name').textContent='选择 TXT、MD 或 EPUB 文件（64 MB 以内）';
+  try{const book=await api('/api/lite/upload?'+new URLSearchParams({name:file.name,...Object.fromEntries([['title',$('#upload-title')],['author',$('#upload-author')]].filter(([,input])=>'edited' in input.dataset).map(([key,input])=>[key,input.value.trim()]))}),undefined,file);
+    $('#upload-form').reset();$('#upload-names').hidden=true;$('#upload-file-name').textContent='选择 TXT、MD 或 EPUB 文件（64 MB 以内）';
     toast('已保存到 Windows 书库：'+book.rel);await chooseBook(book.id);}
   catch(error){fail(error.message);}finally{button.disabled=false;button.textContent='上传到 Windows 书库';}
 };
