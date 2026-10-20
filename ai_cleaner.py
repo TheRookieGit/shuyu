@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import ctypes
 import hashlib
@@ -23,6 +25,8 @@ import zipfile
 MODEL = 'claude-haiku-5-5'
 SUPPORTED = {'.txt','.text','.md','.epub','.eqpub'}
 MAX_SOURCE = 64*1024*1024
+# Fragments sent to Claude at the same time during one job.
+PARALLEL = 4
 CATEGORIES = {'author_note','garbled','censored'}
 # A user-written instruction. Kept out of CATEGORIES, so automatic cleanup never runs one.
 CUSTOM = 'custom'
@@ -406,17 +410,25 @@ class Cleaner:
     def _run(self,uid):
         job=self._job(uid)
         try:
-            doc=self._document(job);client=self.client()
-            while job['progress']<len(job['chunks']):
-                if job['cancel']:break
-                chunk=job['chunks'][job['progress']];start,end=chunk['start'],chunk['end']
-                result,usage=client.analyze(doc.text[start:end],doc.text[max(0,start-200):start],doc.text[end:end+200],job['options']['categories'],job['options'].get('instruction',''))
-                accepted,rejected=validate_edits(doc.text,chunk,result,job['options']['categories'],job['patches'])
-                with self.lock:
-                    job['patches'].extend(accepted);job['rejected']+=rejected;job['progress']+=1
-                    for key in ('input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens'):
-                        job['usage'][key]=job['usage'].get(key,0)+int(usage.get(key,0))
-                    self._persist(job)
+            doc=self._document(job);client=self.client();chunks=job['chunks']
+            def ask(chunk):
+                start,end=chunk['start'],chunk['end']
+                return client.analyze(doc.text[start:end],doc.text[max(0,start-200):start],doc.text[end:end+200],job['options']['categories'],job['options'].get('instruction',''))
+            # Most of each request is Claude writing its answer, so several fragments are in flight at once.
+            # Answers are still applied in fragment order, keeping progress a resumable prefix.
+            with ThreadPoolExecutor(PARALLEL,thread_name_prefix='claude-fragment') as pool:
+                pending=deque();submitted=job['progress']
+                while True:
+                    while not job['cancel'] and submitted<len(chunks) and len(pending)<PARALLEL:
+                        pending.append(pool.submit(ask,chunks[submitted]));submitted+=1
+                    if not pending:break
+                    result,usage=pending.popleft().result()
+                    accepted,rejected=validate_edits(doc.text,chunks[job['progress']],result,job['options']['categories'],job['patches'])
+                    with self.lock:
+                        job['patches'].extend(accepted);job['rejected']+=rejected;job['progress']+=1
+                        for key in ('input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens'):
+                            job['usage'][key]=job['usage'].get(key,0)+int(usage.get(key,0))
+                        self._persist(job)
             with self.lock:job['status']='paused' if job['cancel'] and job['progress']<len(job['chunks']) else 'ready'
         except Exception as exc:
             with self.lock:job.update(status='failed',error=str(exc) if isinstance(exc,CleanError) else '当前任务未完成，请检查接口或文件后重试。')

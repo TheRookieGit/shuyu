@@ -10,7 +10,7 @@ import urllib.request
 from xml.etree import ElementTree as ET
 import zipfile
 
-from ai_cleaner import CUSTOM, SYSTEM, Cleaner, CleanError, ClaudeClient, Document, MODEL, decode_text, plan_chunks, protect_secret, system_prompt, validate_edits
+from ai_cleaner import CUSTOM, PARALLEL, SYSTEM, Cleaner, CleanError, ClaudeClient, Document, MODEL, decode_text, plan_chunks, protect_secret, system_prompt, validate_edits
 from auto_clean import OPTIONS as AUTO_OPTIONS
 from server import Handler, Library, UserError
 from tests.test_library import LibraryFixture, packed
@@ -120,8 +120,9 @@ class CleanerTests(LibraryFixture,unittest.TestCase):
         self.assertTrue(all(c['end']-c['start']<=5000 for c in plan_chunks('甲'*12000,'full',{'garbled'})))
 
     def test_pause_resume_preserves_completed_segments_and_restart_state(self):
-        self.source.write_text('第一章\n'+'甲'*12000,encoding='utf-8')
+        self.source.write_text('第一章\n'+'甲'*40000,encoding='utf-8')
         job=self.ai.prepare({'id':self.uid,'mode':'full'});entered=threading.Event();release=threading.Event()
+        self.assertGreater(job['chunks'],PARALLEL+1)
         def blocked(*args):entered.set();release.wait(3);return {'edits':[]},{}
         with patch.object(ClaudeClient,'analyze',side_effect=blocked):
             self.ai.start(job['id']);self.assertTrue(entered.wait(3))
@@ -131,10 +132,25 @@ class CleanerTests(LibraryFixture,unittest.TestCase):
             finally:release.set()
             deadline=time.time()+3
             while self.ai.active and time.time()<deadline:time.sleep(.01)
-        paused=self.ai.public(job['id']);self.assertEqual(paused['status'],'paused');self.assertEqual(paused['progress'],1)
-        self.ai=Cleaner(self.lib);restored=self.ai.public(job['id']);self.assertEqual(restored['progress'],1)
+        # Fragments already sent finish and are kept; nothing new is sent after stopping.
+        paused=self.ai.public(job['id']);self.assertEqual(paused['status'],'paused');self.assertEqual(paused['progress'],PARALLEL)
+        self.ai=Cleaner(self.lib);restored=self.ai.public(job['id']);self.assertEqual(restored['progress'],PARALLEL)
         complete,remote=self.complete(restored,lambda *args:({'edits':[]},{}))
-        self.assertEqual(remote.call_count,complete['chunks']-1)
+        self.assertEqual(remote.call_count,complete['chunks']-PARALLEL)
+
+    def test_fragments_are_sent_together_and_applied_in_order(self):
+        self.source.write_text(''.join(f'第{i}章\n'+'甲'*4000+f'\n作者有话说：第{i}章完。\n' for i in range(1,9)),encoding='utf-8')
+        job=self.ai.prepare({'id':self.uid});running=[0];peak=[0];lock=threading.Lock()
+        def slow(segment,*args):
+            with lock:running[0]+=1;peak[0]=max(peak[0],running[0])
+            # Later fragments answer first, so order can only come from the runner.
+            time.sleep(.2 if '第1章完' in segment else .05)
+            with lock:running[0]-=1
+            return suggestions(segment) if '作者有话说' not in segment else ({'edits':[edit(segment[segment.index('作者有话说'):segment.index('完。')+2])]},{'output_tokens':1})
+        job,_=self.complete(job,slow)
+        self.assertEqual(peak[0],PARALLEL)
+        self.assertEqual([p['before'] for p in sorted(job['patches'],key=lambda p:p['start'])],[f'作者有话说：第{i}章完。' for i in range(1,9)][:len(job['patches'])])
+        self.assertEqual(job['patch_total'],8);self.assertEqual(job['usage']['output_tokens'],8)
 
     def test_failed_request_can_resume_and_does_not_write_source(self):
         original=self.source.read_bytes();job=self.ai.prepare({'id':self.uid})
