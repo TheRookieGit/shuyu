@@ -30,6 +30,7 @@ async function run(){
   await waitFor(()=>$('#stat-total').textContent.includes('8'),'statistics');
   for(const selector of ['#sidebar','#reader','#continue-banner','.favorite-button','#main-nav','#import-file'])assert.equal($(selector),null,selector+' removed');
   assert.ok(![...d.querySelectorAll('.card-title')].some(el=>el.textContent.includes('损坏')),'no broken archive masquerading as book');
+  assert.equal($('#lite-link').getAttribute('href'),'lite/','entry to Shuyu Lite');
   console.log('PASS catalog only: no reading, history, favorites, annotations or archive placeholders');
   $('#search-input').value='小舟';$('#search-input').dispatchEvent(new w.Event('input',{bubbles:true}));
   await waitFor(()=>d.querySelectorAll('.book-card').length===1&&$('.card-title').textContent==='夜航','deep archive search');

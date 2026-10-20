@@ -293,30 +293,45 @@ class ClaudeClient:
         return result,usage if isinstance(usage,dict) else {}
 
 
+# The full page and Shuyu Lite each choose their own way to reach Claude. Lite follows the full page until it is set.
+PROFILES={'main':'claude_config','lite':'claude_config_lite'}
+
+
 class Cleaner:
     def __init__(self,library):
         self.lib=library;self.directory=library.data_dir/'cleaning';self.jobs={};self.lock=threading.RLock();self.active=None
+        self.queue=deque()
 
-    def config(self):
-        with self.lib.db() as db:row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
-        values=json.loads(row[0]) if row else {}
+    def _values(self,profile):
+        if profile not in PROFILES:raise CleanError('无效的 Claude 设置。')
+        with self.lib.db() as db:
+            row=db.execute('SELECT value FROM settings WHERE key=?',(PROFILES[profile],)).fetchone()
+            if not row and profile!='main':return self._values('main')|{'inherited':True}
+        return json.loads(row[0]) if row else {}
+
+    def config(self,profile='main'):
+        values=self._values(profile)
         transport=values.get('transport','api')
         from claude_terminal import find_command
         installed=bool(find_command(values.get('terminal_path',''))) if transport=='terminal' else False
         key_set=bool(values.get('secret') or os.environ.get('ANTHROPIC_API_KEY'))
         return {'base_url':values.get('base_url','https://api.anthropic.com/v1'),'model':MODEL,'transport':transport,
                 'terminal_path':values.get('terminal_path',''),'terminal_found':installed,
-                'key_set':key_set,'can_start':installed if transport=='terminal' else key_set}
+                'key_set':key_set,'can_start':installed if transport=='terminal' else key_set,
+                'profile':profile,'inherited':bool(values.get('inherited'))}
 
-    def key(self):
-        with self.lib.db() as db:row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
-        secret=json.loads(row[0]).get('secret') if row else None
+    def key(self,profile='main'):
+        secret=self._values(profile).get('secret')
         return protect_secret(secret,True) if secret else os.environ.get('ANTHROPIC_API_KEY','')
 
-    def configure(self,data):
+    def configure(self,data,profile='main'):
         with self.lock:
             if self.active:raise CleanError('AI 正在处理，请完成或停止任务后修改接口设置。')
-            previous=self.config()
+            if profile!='main' and data.get('inherit'):
+                # Back to following the full page's settings.
+                with self.lib.db() as db:db.execute('DELETE FROM settings WHERE key=?',(PROFILES[profile],))
+                return self.config(profile)
+            previous=self.config(profile)
             transport=data.get('transport',previous['transport'])
             if transport not in {'api','terminal'}:raise CleanError('请选择 API 或本机命令行。')
             terminal_path=str(data.get('terminal_path',previous['terminal_path'])).strip()
@@ -329,32 +344,31 @@ class Cleaner:
                 raise CleanError('在线 API 必须使用 HTTPS。')
             if not parsed.path or parsed.path=='/':base+='/v1'
             with self.lib.db() as db:
-                row=db.execute("SELECT value FROM settings WHERE key='claude_config'").fetchone()
-                values=json.loads(row[0]) if row else {}
+                values=self._values(profile);values.pop('inherited',None)
                 values.update(base_url=base,transport=transport,terminal_path=terminal_path)
                 if data.get('clear_key'):values.pop('secret',None)
                 if data.get('api_key'):
                     value=str(data['api_key']).strip()
                     if len(value)>2048 or any(c in value for c in '\r\n'):raise CleanError('无效的 API Key。')
                     values['secret']=protect_secret(value)
-                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('claude_config',json.dumps(values)))
-        return self.config()
+                db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',(PROFILES[profile],json.dumps(values)))
+        return self.config(profile)
 
-    def terminal_status(self):
+    def terminal_status(self,profile='main'):
         from claude_terminal import ClaudeTerminal
-        return ClaudeTerminal(self.config(),self.lib.data_dir/'terminal').status()
+        return ClaudeTerminal(self.config(profile),self.lib.data_dir/'terminal').status()
 
-    def client(self):
-        config=self.config()
+    def client(self,profile='main'):
+        config=self.config(profile)
         if config['transport']=='terminal':
             from claude_terminal import ClaudeTerminal
             return ClaudeTerminal(config,self.lib.data_dir/'terminal')
-        return ClaudeClient(config,self.key())
+        return ClaudeClient(config,self.key(profile))
 
-    def test_connection(self):
-        result,usage=self.client().analyze('这是一条连接测试，不需要修改。',categories=['author_note'])
+    def test_connection(self,profile='main'):
+        result,usage=self.client(profile).analyze('这是一条连接测试，不需要修改。',categories=['author_note'])
         if not isinstance(result.get('edits'),list):raise CleanError('接口没有返回预期结构。')
-        return {'ok':True,'model':MODEL,'usage':usage,'transport':self.config()['transport']}
+        return {'ok':True,'model':MODEL,'usage':usage,'transport':self.config(profile)['transport']}
 
     def _persist(self,job):
         directory=self.directory/job['id'];directory.mkdir(parents=True,exist_ok=True)
@@ -368,7 +382,7 @@ class Cleaner:
                 path=self.directory/uid/'job.json'
                 if not path.is_file():raise CleanError('未找到清理任务。')
                 self.jobs[uid]=json.loads(path.read_text(encoding='utf-8'))
-                if self.jobs[uid]['status']=='running':self.jobs[uid].update(status='paused',error='服务曾停止，点击继续可从已完成位置接着检查。')
+                if self.jobs[uid]['status'] in {'running','queued'}:self.jobs[uid].update(status='paused',error='服务曾停止，点击继续可从已完成位置接着检查。')
             job=self.jobs[uid]
             if job['root']!=self.lib.root:raise CleanError('这个任务属于其他书库，请先切换回原书库。')
             return job
@@ -377,6 +391,8 @@ class Cleaner:
         book=self.lib.book(data['id']);base_version=str(data.get('version_id',''))
         path=self.lib.version_path(book,base_version)
         categories=list(dict.fromkeys(data.get('categories',sorted(CATEGORIES))))
+        profile=str(data.get('profile','main'))
+        if profile not in PROFILES:raise CleanError('无效的 Claude 设置。')
         options={'mode':data.get('mode','focused'),'categories':categories,'encoding':data.get('encoding','auto'),
                  'instruction':str(data.get('instruction','')).strip() if CUSTOM in categories else ''}
         if not categories or not set(categories)<=TASKS:raise CleanError('请选择有效的清理项目。')
@@ -385,7 +401,7 @@ class Cleaner:
         uid=uuid.uuid4().hex;directory=self.directory/uid;directory.mkdir(parents=True)
         snapshot=directory/('source'+doc.ext)
         with snapshot.open('xb') as stream:stream.write(doc.raw)
-        job={'id':uid,'book_id':book['id'],'root':book['root'],'title':book['title'],'base_version':base_version,'ext':doc.ext,
+        job={'id':uid,'profile':profile,'book_id':book['id'],'root':book['root'],'title':book['title'],'base_version':base_version,'ext':doc.ext,
              'source_hash':doc.digest,'encoding':doc.encoding,'options':options,'chunks':chunks,'progress':0,'status':'prepared',
              'patches':[],'rejected':0,'error':'','cancel':False,'created':time.time(),'model':MODEL,'usage':{},'exports':{},
              'characters':len(doc.text),'send_characters':sum(c['end']-c['start']+min(200,c['start'])+min(200,len(doc.text)-c['end']) for c in chunks)}
@@ -394,14 +410,18 @@ class Cleaner:
 
     def _document(self,job):return Document(self.directory/job['id']/('source'+job['ext']),job['options']['encoding'])
 
-    def start(self,uid):
+    def start(self,uid,queue=False):
+        """queue: while another job runs, wait for it instead of refusing (Shuyu Lite's batches)."""
         with self.lock:
             job=self._job(uid)
-            if self.active:raise CleanError('已有 AI 清理任务正在运行，请先完成或停止。')
-            if job['status']=='ready':return self.public(uid)
-            config=self.config()
+            if job['status'] in {'ready','queued'} or self.active==uid:return self.public(uid)
+            if self.active:
+                if not queue:raise CleanError('已有 AI 清理任务正在运行，请先完成或停止。')
+                job.update(status='queued',cancel=False,error='');self.queue.append(uid);self._persist(job)
+                return self.public(uid)
+            profile=job.get('profile','main');config=self.config(profile)
             if job['chunks']:
-                if config['transport']=='terminal':self.client().require_subscription()
+                if config['transport']=='terminal':self.client(profile).require_subscription()
                 elif not config['key_set']:raise CleanError('请先填写 Claude API Key，再开始 AI 检查。')
             job.update(status='running',cancel=False,error='');self.active=uid;self._persist(job)
             threading.Thread(target=self._run,args=(uid,),daemon=True,name='claude-cleaner').start()
@@ -410,7 +430,7 @@ class Cleaner:
     def _run(self,uid):
         job=self._job(uid)
         try:
-            doc=self._document(job);client=self.client();chunks=job['chunks']
+            doc=self._document(job);client=self.client(job.get('profile','main'));chunks=job['chunks']
             def ask(chunk):
                 start,end=chunk['start'],chunk['end']
                 return client.analyze(doc.text[start:end],doc.text[max(0,start-200):start],doc.text[end:end+200],job['options']['categories'],job['options'].get('instruction',''))
@@ -433,21 +453,32 @@ class Cleaner:
         except Exception as exc:
             with self.lock:job.update(status='failed',error=str(exc) if isinstance(exc,CleanError) else '当前任务未完成，请检查接口或文件后重试。')
         finally:
-            with self.lock:self.active=None;self._persist(job)
+            with self.lock:
+                self.active=None;self._persist(job)
+                while self.queue:
+                    following=self.queue.popleft()
+                    if self.jobs.get(following,{}).get('status')!='queued':continue
+                    self.jobs[following]['status']='paused'
+                    try:self.start(following)
+                    except CleanError as exc:
+                        self.jobs[following].update(status='failed',error=str(exc));self._persist(self.jobs[following]);continue
+                    break
 
     def cancel(self,uid):
         with self.lock:
             job=self._job(uid);job['cancel']=True
-            if job['status']=='prepared':job['status']='paused'
+            if job['status'] in {'prepared','queued'}:job['status']='paused'
+            if uid in self.queue:self.queue.remove(uid)
             self._persist(job)
         return self.public(uid)
 
     def public(self,uid,page=1):
         with self.lock:
             job=self._job(uid);page=max(1,int(page));patches=sorted(job['patches'],key=lambda p:p['start']);limit=12
-            config=self.config()
+            config=self.config(job.get('profile','main'))
             return {k:job[k] for k in ('id','book_id','title','base_version','status','encoding','progress','error','rejected','characters','send_characters','model','usage','cancel')}|{
-                'chunks':len(job['chunks']),'options':job['options'],'patch_total':len(patches),'patches':patches[(page-1)*limit:page*limit],
+                'chunks':len(job['chunks']),'options':job['options'],'profile':job.get('profile','main'),
+                'queue_position':list(self.queue).index(uid)+1 if uid in self.queue else 0,'patch_total':len(patches),'patches':patches[(page-1)*limit:page*limit],
                 'defaults':[p['id'] for p in patches if p['selected']],'page':page,'pages':(len(patches)+limit-1)//limit,
                 'destination':'本机 Claude Code → Claude 订阅' if config['transport']=='terminal' else config['base_url'],
                 'key_set':config['key_set'],'can_start':config['can_start'],'transport':config['transport']}
@@ -464,13 +495,18 @@ class Cleaner:
             if hashlib.sha256(source.read_bytes()).hexdigest()!=job['source_hash']:raise CleanError('输入版本已变化，请重新生成检查预览。')
             doc=self._document(job);patches=[available[key] for key in selected]
             # All paths and version IDs are generated server-side; there is no overwrite endpoint.
-            version_id=uuid.uuid4().hex;folder=self.lib.data_dir/'versions'/book['id']/version_id;folder.mkdir(parents=True,exist_ok=True)
-            name=re.sub(r'[<>:"/\\|?*\x00-\x1f]','_',book['title']).strip(' .')[:70] or '小说'
-            if name.upper().split('.')[0] in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}:name='_'+name
-            target=folder/(name+'.清理版'+('.epub' if job['ext']=='.eqpub' else job['ext']))
+            version_id=uuid.uuid4().hex;ext='.epub' if job['ext']=='.eqpub' else job['ext'];number=None
+            if self.lib.uploads.owns(book):
+                # A Lite upload keeps its versions beside it, named like the upload itself.
+                number=self.lib.next_version_number(book['id']);target=self.lib.uploads.version_target(book,number,ext)
+            else:
+                folder=self.lib.data_dir/'versions'/book['id']/version_id;folder.mkdir(parents=True,exist_ok=True)
+                name=re.sub(r'[<>:"/\\|?*\x00-\x1f]','_',book['title']).strip(' .')[:70] or '小说'
+                if name.upper().split('.')[0] in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}:name='_'+name
+                target=folder/(name+'.清理版'+ext)
             try:
                 doc.write_copy(target,patches)
-                result=self.lib.add_version(book,version_id,target,job['base_version'],len(patches),MODEL,str(data.get('label','')))
+                result=self.lib.add_version(book,version_id,target,job['base_version'],len(patches),MODEL,str(data.get('label','')),number)
             except Exception:
                 target.unlink(missing_ok=True);raise
             job['exports'][signature]=result;self._persist(job)

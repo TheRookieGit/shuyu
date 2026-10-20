@@ -14,9 +14,12 @@ const store={get:key=>{try{return localStorage.getItem(key)||'';}catch{return ''
 const hostedPage=location.hostname.endsWith('.github.io');
 const DEFAULT_SERVER='https://windows.tailc0b5f5.ts.net';
 const serverBase=()=>hostedPage?store.get('shuyu-server')||DEFAULT_SERVER:'';
-const TASK_KEY='shuyu-lite-task';
+const TASK_KEY='shuyu-lite-task',BATCH_KEY='shuyu-lite-batch';
+// Lite has its own Claude settings on the backend, separate from the full page's.
+const PROFILE='lite';
 let session={local:true};let signedIn;const authReady=new Promise(resolve=>signedIn=resolve);
-const lite={book:null,job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,renderKey:'',search:0,generation:0,version:null};
+const lite={book:null,job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,renderKey:'',search:0,generation:0,version:null,
+  uploads:[],batchBooks:null,batch:null,batchTimer:null};
 
 // The offline prompt already explains it, so these are never shown again as an error toast.
 class OfflineError extends Error{constructor(){super('连不上 Windows 电脑上的书屿');}}
@@ -97,32 +100,49 @@ async function readOpening(file){
   if(bytes[0]===0xff&&bytes[1]===0xfe||bytes[0]===0xfe&&bytes[1]===0xff)return new TextDecoder('utf-16').decode(bytes);
   try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:true});}catch{return new TextDecoder('gb18030').decode(bytes);}
 }
-$('#upload-file').onchange=async()=>{
-  const file=$('#upload-file').files[0];$('#upload-error').hidden=true;$('#upload-names').hidden=!file;if(!file)return;
-  $('#upload-file-name').textContent=`${file.name} · ${(file.size/1048576).toFixed(1)} MB`;
-  for(const input of [$('#upload-title'),$('#upload-author')]){input.value='';delete input.dataset.edited;}
+async function detectNames(file){
   const named=nameFromFile(file.name),epub=/\.epub$/i.test(file.name);
   let inner={title:'',author:''};if(!epub)try{inner=nameFromText(await readOpening(file));}catch{}
-  if(file!==$('#upload-file').files[0])return;
   // An EPUB's own title and author are read on the Windows side when the file name does not name the book.
-  $('#upload-title').value=named.explicit?named.title:epub?'':inner.title||named.title;
-  $('#upload-author').value=named.author||inner.author;
-  $('#upload-title').placeholder=$('#upload-author').placeholder=epub?'上传时读取电子书里的信息':'没有识别到';
-  $('#upload-detected').textContent=epub&&!named.explicit?'书名和作者会在上传时从电子书里读取；需要的话可以直接填写。':'已自动识别，可以直接上传；需要的话可以修改。';
+  return {title:named.explicit?named.title:epub?'':inner.title||named.title,author:named.author||inner.author,epub};
+}
+function renderUploads(){
+  $('#upload-list').hidden=!lite.uploads.length;
+  $('#upload-list').innerHTML=lite.uploads.map((item,i)=>`<li><div class="upload-file"><span>${escapeHTML(item.file.name)} · ${sizeText(item.file.size)}</span><button class="link-button" type="button" data-remove="${i}">移除</button></div>
+    <div class="options"><label>书名<input data-index="${i}" data-field="title" maxlength="60" value="${escapeHTML(item.title)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label>
+    <label>作者<input data-index="${i}" data-field="author" maxlength="30" value="${escapeHTML(item.author)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label></div></li>`).join('');
+  $('button[type="submit"]',$('#upload-form')).textContent=lite.uploads.length>1?`上传这 ${lite.uploads.length} 本到 Windows 书库`:'上传到 Windows 书库';
+}
+$('#upload-file').onchange=async()=>{
+  $('#upload-error').hidden=true;const files=[...$('#upload-file').files];
+  const added=await Promise.all(files.map(async file=>({file,...await detectNames(file),edited:{}})));
+  lite.uploads.push(...added);$('#upload-file').value='';renderUploads();
 };
-for(const input of [$('#upload-title'),$('#upload-author')])input.oninput=()=>{input.dataset.edited='1';};
+// Only a field the reader edits is sent; the backend reads the rest from the file itself.
+$('#upload-list').oninput=event=>{const input=event.target.closest('[data-field]');if(!input)return;const item=lite.uploads[input.dataset.index];item[input.dataset.field]=input.value;item.edited[input.dataset.field]=true;};
+$('#upload-list').onclick=event=>{const button=event.target.closest('[data-remove]');if(button){lite.uploads.splice(Number(button.dataset.remove),1);renderUploads();}};
 $('#upload-form').onsubmit=async event=>{
-  event.preventDefault();const file=$('#upload-file').files[0],button=$('button[type="submit"]',event.target);$('#upload-error').hidden=true;
+  event.preventDefault();const button=$('button[type="submit"]',event.target);$('#upload-error').hidden=true;
   const fail=message=>{$('#upload-error').textContent=message;$('#upload-error').hidden=false;};
-  if(!file)return fail('请选择要上传的小说文件。');
-  if(!/\.(txt|md|epub)$/i.test(file.name))return fail('只能上传 TXT、MD 或 EPUB 小说。');
-  if(file.size>64*1024*1024)return fail('只能上传 64 MB 以内的文件。');
-  if('edited' in $('#upload-title').dataset&&!$('#upload-title').value.trim())return fail('请填写书名。');
-  button.disabled=true;button.textContent='正在上传到 Windows 书库…';
-  try{const book=await api('/api/lite/upload?'+new URLSearchParams({name:file.name,...Object.fromEntries([['title',$('#upload-title')],['author',$('#upload-author')]].filter(([,input])=>'edited' in input.dataset).map(([key,input])=>[key,input.value.trim()]))}),undefined,file);
-    $('#upload-form').reset();$('#upload-names').hidden=true;$('#upload-file-name').textContent='选择 TXT、MD 或 EPUB 文件（64 MB 以内）';
-    toast('已保存到 Windows 书库：'+book.rel);await chooseBook(book.id);}
-  catch(error){fail(error.message);}finally{button.disabled=false;button.textContent='上传到 Windows 书库';}
+  if(!lite.uploads.length)return fail('请选择要上传的小说文件。');
+  for(const item of lite.uploads){
+    if(!/\.(txt|md|epub)$/i.test(item.file.name))return fail(`${item.file.name}：只能上传 TXT、MD 或 EPUB 小说。`);
+    if(item.file.size>64*1024*1024)return fail(`${item.file.name}：只能上传 64 MB 以内的文件。`);
+    if(item.edited.title&&!item.title.trim())return fail(`${item.file.name}：请填写书名。`);
+  }
+  button.disabled=true;const books=[],failed=[],total=lite.uploads.length;
+  for(const [i,item] of lite.uploads.entries()){
+    button.textContent=total>1?`正在上传 ${i+1} / ${total}…`:'正在上传到 Windows 书库…';
+    try{books.push(await api('/api/lite/upload?'+new URLSearchParams({name:item.file.name,...Object.fromEntries(['title','author'].filter(key=>item.edited[key]).map(key=>[key,item[key].trim()]))}),undefined,item.file));item.done=true;}
+    catch(error){if(error instanceof OfflineError)break;failed.push(`${item.file.name}：${error.message}`);}
+  }
+  button.disabled=false;
+  // Only the books that did not go up stay in the list, ready to try again.
+  lite.uploads=lite.uploads.filter(item=>!item.done);renderUploads();
+  if(failed.length)fail(`有 ${failed.length} 本没有上传：\n`+failed.join('\n'));
+  if(!books.length)return;
+  toast(books.length>1?`已保存 ${books.length} 本到 Windows 书库的 Lite上传 文件夹`:'已保存到 Windows 书库：'+books[0].rel);
+  if(books.length===1)await chooseBook(books[0].id);else chooseBatch(books);
 };
 async function chooseBook(id,versionId){
   try{
@@ -138,7 +158,19 @@ async function chooseBook(id,versionId){
   }catch(error){onError(error);}
 }
 $('#change-book').onclick=()=>{lite.book=null;$('#chosen').hidden=true;$('#search-area').hidden=false;showStep();$('#search').focus();};
-function showStep(step){for(const name of ['setup','review','done'])$('#'+name).hidden=name!==step;$('#pick').hidden=step==='review'||step==='done';}
+function showStep(step){
+  for(const name of ['setup','review','batch','done'])$('#'+name).hidden=name!==step;$('#pick').hidden=['review','batch','done'].includes(step);
+  $('#setup-batch').hidden=!lite.batchBooks;$('#chosen').hidden=!lite.book||!!lite.batchBooks;
+  $('button[type="submit"]',$('#setup-form')).textContent=lite.batchBooks?`为这 ${lite.batchBooks.length} 本生成计划并依次处理`:'生成处理计划';
+}
+// Several uploads at once: the same choices for every book, processed one after another.
+function chooseBatch(books){
+  lite.book=null;lite.batchBooks=books;$('#search-area').hidden=true;$('#chosen').hidden=true;$('#batch-chosen').hidden=false;
+  $('#batch-count').textContent=`这一批 ${books.length} 本`;$('#batch-titles').textContent=books.map(b=>'《'+b.title+'》').join('、');
+  $('#setup-batch').textContent=`这 ${books.length} 本会用同样的设置、从原始版本开始，一本接一本处理。费用只按实际用量计算，一次处理多本不会多花钱。`;
+  $('#encoding').disabled=false;showStep('setup');
+}
+$('#batch-change').onclick=()=>{lite.batchBooks=null;$('#batch-chosen').hidden=true;$('#search-area').hidden=false;showStep();};
 
 // Step 2: choose what to do.
 function syncSetup(){
@@ -155,14 +187,26 @@ $('#setup-form').onsubmit=async event=>{
   if(!categories.length)return setupError('请至少选择一项。');
   if(categories.includes('custom')&&!instruction)return setupError('请写下你的要求。');
   button.disabled=true;
-  try{const job=await api('/api/clean/prepare',{id:lite.book.id,version_id:$('#version').value,mode:$('#mode').value,encoding:$('#encoding').disabled?'auto':$('#encoding').value,categories,instruction});
-    store.set(TASK_KEY,JSON.stringify({id:job.id,title:job.title}));openJob(job);}
-  catch(error){setupError(error.message);}finally{button.disabled=false;}
+  const options={mode:$('#mode').value,encoding:$('#encoding').disabled?'auto':$('#encoding').value,categories,instruction,profile:PROFILE};
+  try{
+    if(lite.batchBooks){
+      const entries=[];
+      for(const book of lite.batchBooks){
+        try{const job=await api('/api/clean/prepare',{id:book.id,version_id:'',...options,encoding:/\.epub$/i.test(book.name)?'auto':options.encoding});
+          await api('/api/clean/start',{job_id:job.id,queue:true});entries.push({id:job.id,title:job.title,book_id:job.book_id});}
+        catch(error){if(error instanceof OfflineError)throw error;entries.push({title:book.title,book_id:book.id,error:error.message});}
+      }
+      lite.batchBooks=null;$('#batch-chosen').hidden=true;$('#search-area').hidden=false;openBatch(entries);
+    }else{
+      const job=await api('/api/clean/prepare',{id:lite.book.id,version_id:$('#version').value,...options});
+      store.set(TASK_KEY,JSON.stringify({id:job.id,title:job.title}));openJob(job);
+    }
+  }catch(error){setupError(error.message);}finally{button.disabled=false;}
 };
 function setupError(message){$('#setup-error').textContent=message;$('#setup-error').hidden=false;}
 
 // Step 3: run, review and save.
-function openJob(job){clearTimeout(lite.timer);lite.generation++;Object.assign(lite,{job,page:1,renderKey:''});lite.selected.clear();lite.seenDefaults.clear();$('#label').value='';$('#resume').hidden=true;showStep('review');renderJob(job);}
+function openJob(job){clearTimeout(lite.timer);clearTimeout(lite.batchTimer);const inBatch=!!lite.batch?.some(entry=>entry.id===job.id);$('#discard').hidden=inBatch;$('#review-back').hidden=!inBatch;lite.generation++;Object.assign(lite,{job,page:1,renderKey:''});lite.selected.clear();lite.seenDefaults.clear();$('#label').value='';$('#resume').hidden=true;showStep('review');renderJob(job);}
 function selectionCount(){$('#selection').textContent=`已选择 ${lite.selected.size} 项修改`;$('#save').textContent=`采用 ${lite.selected.size} 项，另存为新版本`;$('#save').disabled=!lite.selected.size;}
 function renderJob(job){
   lite.job=job;
@@ -170,13 +214,13 @@ function renderJob(job){
   const terminal=job.transport==='terminal',tasks=(job.options?.categories||[]).map(c=>names[c]).join('、');
   $('#job-summary').textContent=`《${job.title}》 · ${tasks} · 正文 ${number(job.characters)} 字 · ${number(job.chunks)} 个片段，含上下文约 ${number(job.send_characters)} 字 · 编码 ${job.encoding} · ${job.model}，${terminal?'通过本机 Claude Code 订阅':'发送到 '+job.destination}`;
   $('#job-instruction').hidden=!job.options?.instruction;$('#job-instruction').textContent='你的要求：'+(job.options?.instruction||'');
-  const status={prepared:'计划已就绪，还没有发送任何内容。',running:'Claude 正在检查…',ready:job.chunks?'检查完成，请逐项确认。':'没有发现明显标记。可以放弃这个任务，改用「逐段检查全文」再试。',paused:'已停止后续请求，可以继续，或先采用已有建议。',failed:'检查中断，可以重试，或先采用已有建议。'};
+  const status={prepared:'计划已就绪，还没有发送任何内容。',queued:`排队中，前面还有 ${job.queue_position} 本。`,running:'Claude 正在检查…',ready:job.chunks?'检查完成，请逐项确认。':'没有发现明显标记。可以放弃这个任务，改用「逐段检查全文」再试。',paused:'已停止后续请求，可以继续，或先采用已有建议。',failed:'检查中断，可以重试，或先采用已有建议。'};
   const inputTokens=(job.usage.input_tokens||0)+(job.usage.cache_creation_input_tokens||0)+(job.usage.cache_read_input_tokens||0);
-  $('#job-status').textContent=`${status[job.status]||job.status} ${job.progress} / ${job.chunks} · ${job.patch_total} 项建议${!job.can_start&&job.chunks?' · 还没有配置 Claude，请先在完整版书屿的「书库设置 → Claude AI 设置」里配置。':''}${job.rejected?` · ${job.rejected} 项无效或重叠的建议已排除`:''}${inputTokens?` · 用量 ${number(inputTokens)} 输入 / ${number(job.usage.output_tokens)} 输出 tokens`:''}`;
+  $('#job-status').textContent=`${status[job.status]||job.status} ${job.progress} / ${job.chunks} · ${job.patch_total} 项建议${!job.can_start&&job.chunks?' · 还没有配置 Claude，请先点右上角的「Claude 设置」。':''}${job.rejected?` · ${job.rejected} 项无效或重叠的建议已排除`:''}${inputTokens?` · 用量 ${number(inputTokens)} 输入 / ${number(job.usage.output_tokens)} 输出 tokens`:''}`;
   $('#progress').max=Math.max(1,job.chunks);$('#progress').value=job.progress;
   $('#job-error').hidden=!job.error;$('#job-error').textContent=job.error;
-  $('#start').hidden=['running','ready'].includes(job.status);$('#start').disabled=!job.can_start&&job.chunks>0;$('#start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?(terminal?'使用本机 Claude 订阅开始检查':'发送片段给 Claude，开始检查'):'继续发送未完成的片段';
-  $('#stop').hidden=job.status!=='running';$('#stop').disabled=job.cancel;$('#stop').textContent=job.cancel?'等待当前请求结束…':'停止后续请求';
+  $('#start').hidden=['running','ready','queued'].includes(job.status);$('#start').disabled=!job.can_start&&job.chunks>0;$('#start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?(terminal?'使用本机 Claude 订阅开始检查':'发送片段给 Claude，开始检查'):'继续发送未完成的片段';
+  $('#stop').hidden=!['running','queued'].includes(job.status);$('#stop').disabled=job.cancel&&job.status==='running';$('#stop').textContent=job.status==='queued'?'取消排队':job.cancel?'等待当前请求结束…':'停止后续请求';
   $('#save-panel').hidden=!['ready','paused','failed'].includes(job.status)||!job.patch_total;
   const renderKey=JSON.stringify([job.id,job.page,job.patch_total,job.status]);
   if(renderKey!==lite.renderKey){
@@ -188,12 +232,13 @@ function renderJob(job){
 }
 async function refreshJob(){
   clearTimeout(lite.timer);if(!lite.job)return;const generation=lite.generation;
-  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:lite.job.id,page:lite.page}));if(generation!==lite.generation)return;renderJob(job);if(job.status==='running')lite.timer=setTimeout(refreshJob,1800);}
+  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:lite.job.id,page:lite.page}));if(generation!==lite.generation)return;renderJob(job);if(['running','queued'].includes(job.status))lite.timer=setTimeout(refreshJob,1800);}
   catch(error){if(generation===lite.generation){onError(error);lite.timer=setTimeout(refreshJob,4000);}}
 }
 async function jobAction(action){
   const button=$('#'+action);button.disabled=true;
-  try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:lite.job.id});await refreshJob();}catch(error){onError(error);button.disabled=false;}
+  // Another job may be running, from Lite or the full page; this one then waits its turn.
+  try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:lite.job.id,queue:true});await refreshJob();}catch(error){onError(error);button.disabled=false;}
 }
 $('#start').onclick=()=>jobAction('start');$('#stop').onclick=()=>jobAction('stop');
 $('#patches').onchange=event=>{const id=event.target.dataset.patch;if(!id)return;if(event.target.checked)lite.selected.add(id);else lite.selected.delete(id);selectionCount();};
@@ -208,6 +253,8 @@ $('#save').onclick=async()=>{
   const button=$('#save');button.disabled=true;
   try{const version=await api('/api/clean/save',{job_id:lite.job.id,selected:[...lite.selected],label:$('#label').value});
     lite.version=version;store.set(TASK_KEY,'');clearTimeout(lite.timer);
+    const entry=lite.batch?.find(entry=>entry.id===lite.job.id);if(entry){entry.saved=version.label;store.set(BATCH_KEY,JSON.stringify(lite.batch));}
+    $('#back-to-batch').hidden=!entry;
     $('#done-message').textContent=`《${lite.job.title}》已另存为「${version.label}」，采用了 ${version.edit_count} 项修改。原文件和已有版本都保留着。`;showStep('done');}
   catch(error){onError(error);button.disabled=false;}
 };
@@ -216,11 +263,71 @@ async function download(bookId,versionId){
 }
 $('#download').onclick=()=>download(lite.version.book_id,lite.version.id);
 $('#version-list').onclick=event=>{const button=event.target.closest('[data-download]');if(button)download(lite.book.id,button.dataset.download);};
-$('#continue').onclick=()=>{lite.job=null;chooseBook(lite.version.book_id,lite.version.id);};
+$('#continue').onclick=()=>{lite.job=null;lite.batchBooks=null;chooseBook(lite.version.book_id,lite.version.id);};
+$('#back-to-batch').onclick=$('#review-back').onclick=()=>{clearTimeout(lite.timer);lite.generation++;lite.job=null;openBatch(lite.batch);};
 $('#again').onclick=()=>{lite.book=null;lite.job=null;lite.version=null;$('#chosen').hidden=true;$('#search-area').hidden=false;$('#search').value='';showStep();search();};
+
+// Step 3 for a batch: one row per book, each reviewed and saved on its own.
+const batchStates={prepared:'等待开始',queued:'排队中',running:'Claude 正在检查',ready:'检查完成',paused:'已停止',failed:'检查中断'};
+function openBatch(entries){lite.batch=entries;store.set(BATCH_KEY,JSON.stringify(entries));$('#resume').hidden=true;showStep('batch');refreshBatch();}
+async function refreshBatch(){
+  clearTimeout(lite.batchTimer);const entries=lite.batch;if(!entries||$('#batch').hidden)return;
+  try{
+    for(const entry of entries)if(entry.id)Object.assign(entry,{job:await api('/api/clean/job?'+new URLSearchParams({job_id:entry.id}))});
+    if(entries!==lite.batch)return;
+    $('#batch-list').innerHTML=entries.map((entry,i)=>{
+      const job=entry.job;if(!job)return `<li><strong>《${escapeHTML(entry.title)}》</strong><span class="error-text">${escapeHTML(entry.error||'没有开始')}</span></li>`;
+      const state=job.status==='queued'?`排队中，前面还有 ${job.queue_position} 本`:batchStates[job.status]||job.status;
+      const done=['ready','paused','failed'].includes(job.status);
+      return `<li><strong>《${escapeHTML(entry.title)}》</strong><span>${state} · ${job.progress} / ${job.chunks} 个片段 · ${job.patch_total} 项建议${entry.saved?` · 已另存为「${escapeHTML(entry.saved)}」`:''}${job.error?' · '+escapeHTML(job.error):''}</span><progress max="${Math.max(1,job.chunks)}" value="${job.progress}"></progress>${done&&job.patch_total?`<button class="button${entry.saved?'':' primary'}" type="button" data-review="${i}">${entry.saved?'再看一次':'确认建议'}</button>`:''}</li>`;
+    }).join('');
+    const jobs=entries.map(entry=>entry.job).filter(Boolean),busy=jobs.some(job=>['running','queued'].includes(job.status));
+    const usage=jobs.reduce((sum,job)=>sum+(job.usage.input_tokens||0)+(job.usage.cache_creation_input_tokens||0)+(job.usage.cache_read_input_tokens||0),0);
+    $('#batch-summary').textContent=`${jobs.filter(job=>['ready','paused','failed'].includes(job.status)).length} / ${entries.length} 本已处理完${usage?` · 用量 ${number(usage)} 输入 / ${number(jobs.reduce((sum,job)=>sum+(job.usage.output_tokens||0),0))} 输出 tokens`:''}`;
+    $('#batch-stop').hidden=!busy;
+    if(busy)lite.batchTimer=setTimeout(refreshBatch,2500);
+  }catch(error){onError(error);lite.batchTimer=setTimeout(refreshBatch,5000);}
+}
+$('#batch-list').onclick=event=>{const button=event.target.closest('[data-review]');if(button)openJob(lite.batch[button.dataset.review].job);};
+$('#batch-stop').onclick=async()=>{
+  for(const entry of lite.batch||[])if(['running','queued'].includes(entry.job?.status))try{await api('/api/clean/cancel',{job_id:entry.id});}catch(error){onError(error);}
+  refreshBatch();
+};
+$('#batch-close').onclick=()=>{clearTimeout(lite.batchTimer);lite.batch=null;store.set(BATCH_KEY,'');$('#search').value='';showStep();search();};
+
+// Lite's own Claude settings: API or the Windows machine's Claude Code subscription.
+async function openAISettings(){
+  try{const config=await api('/api/ai/config?'+new URLSearchParams({profile:PROFILE}));
+    $('#ai-transport').value=config.transport;$('#ai-url').value=config.base_url;$('#ai-terminal-path').value=config.terminal_path;$('#ai-key').value='';$('#ai-clear-key').checked=false;
+    $('#ai-inherited').textContent=config.inherited?'还没有单独设置，现在沿用完整版书屿的设置。保存后，Lite 和完整版就各用各的。':'Lite 使用自己的设置，和完整版书屿互不影响。';
+    $('#ai-inherit').hidden=config.inherited;$('#ai-key-help').textContent=config.key_set?'已有可用的 Key；留空保持不变。':'请填写 Claude API Key，只保存在 Windows 电脑上。';
+    $('#ai-result').textContent='';syncAITransport();if(!$('#ai-dialog').open)$('#ai-dialog').showModal();}
+  catch(error){onError(error);}
+}
+function syncAITransport(){const terminal=$('#ai-transport').value==='terminal';$('#ai-api').hidden=terminal;$('#ai-terminal').hidden=!terminal;}
+$('#ai-transport').onchange=syncAITransport;
+async function saveAI(action){
+  const buttons=$$('#ai-form button');buttons.forEach(b=>b.disabled=true);
+  try{
+    const data={profile:PROFILE,transport:$('#ai-transport').value,terminal_path:$('#ai-terminal-path').value};
+    if(data.transport==='api')Object.assign(data,{base_url:$('#ai-url').value,api_key:$('#ai-key').value,clear_key:$('#ai-clear-key').checked});
+    await api('/api/ai/config',data);
+    if(action==='test'){$('#ai-result').textContent='正在用一条测试文字连接 Claude…';const result=await api('/api/ai/test',{profile:PROFILE});$('#ai-result').textContent=`连接成功 · ${result.model} · ${result.transport==='terminal'?'Claude Code 订阅':'API'}`;}
+    else if(action==='status'){$('#ai-result').textContent='正在检测订阅登录…';const result=await api('/api/ai/terminal?'+new URLSearchParams({profile:PROFILE}));$('#ai-result').textContent=result.message;}
+    else{$('#ai-dialog').close();toast('Lite 的 Claude 设置已保存');}
+    if(lite.job)refreshJob();
+  }catch(error){$('#ai-result').textContent=error.message;}finally{buttons.forEach(b=>b.disabled=false);}
+}
+$('#ai-open').onclick=openAISettings;$('#ai-close').onclick=()=>$('#ai-dialog').close();
+$('#ai-form').onsubmit=event=>{event.preventDefault();saveAI();};$('#ai-test').onclick=()=>saveAI('test');$('#ai-terminal-check').onclick=()=>saveAI('status');
+$('#ai-inherit').onclick=async()=>{try{await api('/api/ai/config',{profile:PROFILE,inherit:true});toast('Lite 改回沿用完整版的设置');openAISettings();}catch(error){$('#ai-result').textContent=error.message;}};
 
 // A task keeps running on the backend after the page closes, so offer to return to it.
 async function offerResume(){
+  let batch=null;try{batch=JSON.parse(store.get(BATCH_KEY)||'null');}catch{}
+  if(batch?.length){
+    $('#resume').textContent=`继续上次的一批（${batch.length} 本）`;$('#resume').hidden=false;$('#resume').onclick=()=>openBatch(batch);return;
+  }
   let last=null;try{last=JSON.parse(store.get(TASK_KEY)||'null');}catch{}
   if(!last?.id)return;
   $('#resume').textContent=`继续上次的任务：《${last.title}》`;$('#resume').hidden=false;
@@ -231,5 +338,5 @@ async function offerResume(){
   try{const response=await request('/api/session');if(!response.ok)throw new Error();session=await response.json();}
   catch{return showOffline();}
   if(!session.authenticated){store.set('shuyu-token','');return showLogin();}
-  started=true;signedIn();$('#app').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
+  started=true;signedIn();$('#app').hidden=false;$('#ai-open').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
 })();

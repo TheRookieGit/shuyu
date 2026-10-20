@@ -30,7 +30,7 @@ from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, 
 from wishlist import Wishlist
 from auto_clean import AutoCleaner
 from catalog_tree import CatalogTree
-from lite_upload import Uploads
+from lite_upload import Uploads, is_version_file
 from book_names import metadata
 
 BASE = Path(__file__).resolve().parent
@@ -103,6 +103,7 @@ class Library:
         self.auto = AutoCleaner(self)
         self.tree = CatalogTree(self)
         self.uploads = Uploads(self)
+        self.uploads.move_versions()
 
     @contextmanager
     def db(self):
@@ -210,6 +211,8 @@ class Library:
                 for name in files:
                     if name.startswith('.') or name.startswith('~$'):
                         continue
+                    if is_version_file(Path(current)/name,root):
+                        continue
                     path = Path(current)/name
                     ext = path.suffix.lower()
                     if ext not in BOOKS and ext not in IMAGES:
@@ -313,17 +316,23 @@ class Library:
             row=db.execute('SELECT path FROM book_versions WHERE id=? AND book_id=?',(version_id,book['id'])).fetchone()
         if not row:raise UserError('这个版本不属于当前书目。')
         path=(self.data_dir/row['path']).resolve()
-        if not path.is_relative_to(self.data_dir/'versions'/book['id']) or not path.is_file():
+        if not (path.is_relative_to(self.data_dir/'versions'/book['id']) or self.uploads.owns(book,path)) or not path.is_file():
             raise UserError('版本文件不存在或无法访问。')
         return path
 
-    def add_version(self,book,uid,path,parent_id,edit_count,model,label=''):
+    def next_version_number(self,book_id):
+        with self.db() as db:
+            return db.execute('SELECT coalesce(max(number),0)+1 FROM book_versions WHERE book_id=?',(book_id,)).fetchone()[0]
+
+    def add_version(self,book,uid,path,parent_id,edit_count,model,label='',number=None):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            number=db.execute('SELECT coalesce(max(number),0)+1 FROM book_versions WHERE book_id=?',(book['id'],)).fetchone()[0]
+            number=number or db.execute('SELECT coalesce(max(number),0)+1 FROM book_versions WHERE book_id=?',(book['id'],)).fetchone()[0]
             label=re.sub(r'[\x00-\x1f]','',label.strip())[:80] or f'AI 清理版 {number}'
+            # Versions live under the data folder, except a Lite upload's, which sit beside it in the library.
+            stored=path.relative_to(self.data_dir).as_posix() if path.is_relative_to(self.data_dir) else str(path)
             db.execute('INSERT INTO book_versions VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                (uid,book['id'],number,label,path.relative_to(self.data_dir).as_posix(),path.suffix.lower(),path.stat().st_size,time.time(),parent_id,edit_count,model))
+                (uid,book['id'],number,label,stored,path.suffix.lower(),path.stat().st_size,time.time(),parent_id,edit_count,model))
         self.classifier.measure(book['id'],uid)
         return next(v for v in self.versions(book['id']) if v['id']==uid)|{'book_id':book['id']}
 
@@ -582,8 +591,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/books':return self.json(self.lib.listing(query))
             if url.path=='/api/book':return self.json(self.lib.book(query['id']))
             if url.path=='/api/issues':return self.json({'items':self.lib.issues()})
-            if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config())
-            if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status())
+            if url.path=='/api/ai/config':return self.json(self.lib.cleaner.config(query.get('profile','main')))
+            if url.path=='/api/ai/terminal':return self.json(self.lib.cleaner.terminal_status(query.get('profile','main')))
             if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
             if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items(query.get('q','')))
@@ -641,7 +650,7 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=self.server.shutdown,daemon=True).start()
                 return
             if self.path=='/api/ai/config':
-                config = self.lib.cleaner.configure(data)
+                config = self.lib.cleaner.configure(data,str(data.get('profile','main')))
                 self.lib.auto.blocked = ''
                 self.lib.auto.wake.set()
                 return self.json(config)
@@ -658,9 +667,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/duplicates/refresh':return self.json(self.lib.organizer.refresh())
             if self.path=='/api/classification/suggest':return self.json(self.lib.classifier.suggest(data))
             if self.path=='/api/text-metrics':return self.json(self.lib.classifier.measure(data['id'],str(data.get('version_id','')),bool(data.get('force'))))
-            if self.path=='/api/ai/test':return self.json(self.lib.cleaner.test_connection())
+            if self.path=='/api/ai/test':return self.json(self.lib.cleaner.test_connection(str(data.get('profile','main'))))
             if self.path=='/api/clean/prepare':return self.json(self.lib.cleaner.prepare(data))
-            if self.path=='/api/clean/start':return self.json(self.lib.cleaner.start(data['job_id']))
+            if self.path=='/api/clean/start':return self.json(self.lib.cleaner.start(data['job_id'],bool(data.get('queue'))))
             if self.path=='/api/clean/cancel':return self.json(self.lib.cleaner.cancel(data['job_id']))
             if self.path=='/api/clean/save':return self.json(self.lib.cleaner.save(data))
             if self.path=='/api/scan':return self.json({'started':self.lib.start_scan(force=True)})

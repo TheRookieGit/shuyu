@@ -63,6 +63,15 @@ progress{width:100%;height:8px;accent-color:var(--green)}
 .offline{width:min(460px,calc(100% - 32px));padding:24px;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
 .offline::backdrop{background:#24392f66}
 .offline ul{padding-left:20px;font-size:13px}
+.upload-list,.batch-list{margin:12px 0;padding:0;list-style:none}
+.upload-list li,.batch-list li{padding:12px 0;border-top:1px solid var(--line)}
+.upload-file{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.upload-list .options{margin-top:8px}
+.batch-list li{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center}
+.batch-list strong{overflow-wrap:anywhere}
+.batch-list span{grid-column:1;color:var(--muted);font-size:12px}
+.batch-list progress{grid-column:1;height:6px}
+.batch-list .button{grid-column:2;grid-row:1/span 3}
 .toast{position:fixed;z-index:10;bottom:24px;left:50%;transform:translateX(-50%);max-width:calc(100% - 32px);padding:12px 20px;border-radius:7px;background:#39523c;color:#f5f7f0;font-size:13px;box-shadow:0 5px 20px #26392224}
 .toast.error{background:#8a4b3c}
 @media(max-width:600px){

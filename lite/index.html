@@ -13,7 +13,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="./"><img src="../favicon.svg" alt=""><span>书屿 Lite<small>小说 AI 处理</small></span></a>
-    <nav class="top-links"><a href="../">完整版书屿</a><button id="logout" class="link-button" type="button" hidden>退出登录</button></nav>
+    <nav class="top-links"><button id="ai-open" class="link-button" type="button" hidden>Claude 设置</button><a href="../">完整版书屿</a><button id="logout" class="link-button" type="button" hidden>退出登录</button></nav>
   </header>
 
   <main>
@@ -41,18 +41,15 @@
             <div id="results" class="results"></div>
           </div>
           <form id="upload-form" hidden>
-            <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub" required><span id="upload-file-name">选择 TXT、MD 或 EPUB 文件（64 MB 以内）</span></label>
-            <div id="upload-names" hidden>
-              <p id="upload-detected" class="hint"></p>
-              <div class="options">
-                <label>书名<input id="upload-title" maxlength="60" autocomplete="off"></label>
-                <label>作者<input id="upload-author" maxlength="30" autocomplete="off"></label>
-              </div>
-            </div>
-            <p class="hint">书名和作者会从文件名和书里自动识别。上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到这本书。</p>
+            <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub" multiple><span>选择 TXT、MD 或 EPUB 小说，可以一次选多本（每本 64 MB 以内）</span></label>
+            <ul id="upload-list" class="upload-list" hidden></ul>
+            <p class="hint">书名和作者会从文件名和书里自动识别，需要的话可以修改。上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到。</p>
             <p id="upload-error" class="notice" hidden></p>
             <button class="button primary" type="submit">上传到 Windows 书库</button>
           </form>
+        </div>
+        <div id="batch-chosen" hidden>
+          <div class="chosen-book"><div><strong id="batch-count"></strong><span id="batch-titles"></span></div><button id="batch-change" class="link-button" type="button">换成其他书</button></div>
         </div>
         <div id="chosen" hidden>
           <div class="chosen-book"><div><strong id="chosen-title"></strong><span id="chosen-meta"></span></div><button id="change-book" class="link-button" type="button">换一本</button></div>
@@ -80,6 +77,7 @@
             <label>文本编码<select id="encoding"><option value="auto">自动识别</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="big5">Big5</option><option value="utf-16">UTF-16</option></select></label>
           </div>
           <p id="mode-hint" class="hint">疑似片段检查可能漏掉没有明显标记的内容。屏蔽字只是根据上下文推测，不能保证是原文；乱码和屏蔽字的建议默认不勾选。</p>
+          <p id="setup-batch" class="hint" hidden></p>
           <p id="setup-error" class="notice" hidden></p>
           <button class="button primary" type="submit">生成处理计划</button>
           <p class="hint">生成计划只在 Windows 电脑上读文件，不会发送任何内容。</p>
@@ -93,7 +91,7 @@
         <progress id="progress" max="1" value="0"></progress>
         <p id="job-status" role="status"></p>
         <p id="job-error" class="notice" hidden></p>
-        <div class="row"><button id="start" class="button primary" type="button">发送片段给 Claude，开始检查</button><button id="stop" class="button" type="button" hidden>停止后续请求</button><button id="discard" class="link-button" type="button">放弃这个任务</button></div>
+        <div class="row"><button id="start" class="button primary" type="button">发送片段给 Claude，开始检查</button><button id="stop" class="button" type="button" hidden>停止后续请求</button><button id="discard" class="link-button" type="button">放弃这个任务</button><button id="review-back" class="link-button" type="button" hidden>返回本批</button></div>
         <div id="patches"></div><div id="pages" class="pages"></div>
         <div id="save-panel" hidden>
           <div class="row"><button id="select-none" class="link-button" type="button">全部取消选择</button><span id="selection" class="hint"></span></div>
@@ -102,14 +100,44 @@
         </div>
       </section>
 
+      <section id="batch" class="card" hidden>
+        <h2><span class="step">3</span>依次处理这一批</h2>
+        <p id="batch-summary" class="hint"></p>
+        <ul id="batch-list" class="batch-list"></ul>
+        <div class="row"><button id="batch-stop" class="button" type="button">停止这一批</button><button id="batch-close" class="link-button" type="button">结束这一批</button></div>
+        <p class="hint">一本接一本处理，每本同时发送 4 个片段；关掉页面也会继续。处理完的书点「确认建议」逐条确认后另存版本。</p>
+      </section>
+
       <section id="done" class="card" hidden>
         <h2>已另存为新版本</h2>
         <p id="done-message"></p>
-        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="continue" class="button" type="button">在这个版本上继续处理</button><button id="again" class="link-button" type="button">换一本书</button></div>
+        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="back-to-batch" class="button" type="button" hidden>返回本批</button><button id="continue" class="button" type="button">在这个版本上继续处理</button><button id="again" class="link-button" type="button">换一本书</button></div>
         <p class="hint">原文件和之前的每个版本都保留着，可以在「全部版本与下载」里随时下载，也可以在完整版书屿的书目详情里找到。</p>
       </section>
     </div>
   </main>
+  <dialog id="ai-dialog" class="offline">
+    <h2>Lite 的 Claude 设置</h2>
+    <p id="ai-inherited" class="hint"></p>
+    <form id="ai-form">
+      <label class="label" for="ai-transport">使用方式</label>
+      <select id="ai-transport"><option value="api">Claude API · 按用量计费</option><option value="terminal">Windows 电脑上的 Claude Code · 使用订阅</option></select>
+      <div id="ai-api">
+        <label class="label" for="ai-url">API 地址</label><input id="ai-url" type="url" spellcheck="false">
+        <label class="label" for="ai-key">API Key</label><input id="ai-key" type="password" autocomplete="new-password" spellcheck="false">
+        <p id="ai-key-help" class="hint"></p>
+        <label class="check"><input id="ai-clear-key" type="checkbox">清除 Lite 保存的 Key</label>
+      </div>
+      <div id="ai-terminal" hidden>
+        <label class="label" for="ai-terminal-path">Claude 程序位置（留空自动查找）</label><input id="ai-terminal-path" autocomplete="off" spellcheck="false">
+        <p class="hint">使用 Windows 电脑上 Claude Code 的订阅登录，不需要 API Key。</p>
+        <button id="ai-terminal-check" class="button" type="button">保存并检测订阅登录</button>
+      </div>
+      <p id="ai-result" class="hint" role="status"></p>
+      <div class="row"><button class="button primary" type="submit">保存</button><button id="ai-test" class="button" type="button">保存并测试连接</button></div>
+      <div class="row"><button id="ai-inherit" class="link-button" type="button">改回沿用完整版的设置</button><button id="ai-close" class="link-button" type="button">关闭</button></div>
+    </form>
+  </dialog>
   <dialog id="offline" class="offline">
     <h2>连不上 Windows 电脑上的书屿</h2>
     <p>书屿 Lite 的书和 AI 处理都在 Windows 电脑上进行。请确认：</p>

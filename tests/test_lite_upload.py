@@ -58,6 +58,11 @@ class LiteUploadTests(LibraryFixture,unittest.TestCase):
         self.scan()
         self.assertEqual(self.lib.book(book['id'])['rel'],UPLOAD_FOLDER+'/'+path.name,'a later scan keeps the same book')
         self.assertEqual([v['id'] for v in self.lib.versions(book['id'])],[second['id'],first['id']])
+        beside=[self.root/UPLOAD_FOLDER/f'《春夜喜雨》作者：杜甫【AI清理版{n}】.txt' for n in (1,2)]
+        self.assertEqual([self.lib.version_path(self.lib.book(book['id']),v['id']) for v in (first,second)],[p.resolve() for p in beside])
+        self.assertEqual(self.lib.listing({'q':'春夜喜雨'})['total'],1,'versions beside an upload are not books of their own')
+        self.assertEqual(self.clean(untitled['id'])['label'],'AI 清理版 1')
+        self.assertTrue((self.root/UPLOAD_FOLDER/'《无名》【AI清理版1】.md').is_file())
         self.assertEqual(path.read_bytes(),raw,'original upload never changed')
         downloaded=[self.lib.download(book['id'],v)[0] for v in ('',first['id'],second['id'])]
         self.assertEqual(downloaded[0],path)
@@ -87,6 +92,46 @@ class LiteUploadTests(LibraryFixture,unittest.TestCase):
         with patch.object(AutoCleaner,'start'):self.lib.auto.enqueue()
         with self.lib.db() as db:queued={r[0] for r in db.execute('SELECT b.title FROM auto_clean a JOIN books b ON b.id=a.book_id')}
         self.assertIn('新书',queued);self.assertNotIn('上传的书',queued)
+
+    def test_earlier_versions_move_beside_the_upload(self):
+        book=self.lib.uploads.save(TEXT.encode(),'a.txt','旧版本','某人')
+        old=self.data/'versions'/book['id']/'v1'/'旧版本.清理版.txt';old.parent.mkdir(parents=True);old.write_text('清理后',encoding='utf-8')
+        self.lib.add_version(self.lib.book(book['id']),'f'*32,old,'',1,'model')
+        self.lib.uploads.move_versions()
+        moved=self.root/UPLOAD_FOLDER/'《旧版本》作者：某人【AI清理版1】.txt'
+        self.assertFalse(old.exists());self.assertEqual(moved.read_text(encoding='utf-8'),'清理后')
+        self.assertEqual(self.lib.version_path(self.lib.book(book['id']),'f'*32),moved.resolve())
+        with self.lib.db() as db:db.execute('UPDATE book_versions SET path=? WHERE id=?',(str(self.root/'春日.epub'),'f'*32))
+        with self.assertRaises(Exception):self.lib.version_path(self.lib.book(book['id']),'f'*32)
+
+    def test_lite_has_its_own_claude_settings(self):
+        cleaner=self.lib.cleaner
+        lite=cleaner.config('lite');self.assertTrue(lite['inherited']);self.assertTrue(lite['key_set']);self.assertEqual(lite['transport'],'api')
+        cleaner.configure({'transport':'terminal'},'lite')
+        self.assertEqual(cleaner.config('lite')['transport'],'terminal');self.assertFalse(cleaner.config('lite')['inherited'])
+        self.assertEqual(cleaner.config()['transport'],'api','the full page keeps its own choice')
+        self.assertEqual(cleaner.key('lite'),'synthetic-test-key','a key set before splitting stays usable')
+        book=self.lib.uploads.save(TEXT.encode(),'a.txt','分开','')
+        job=cleaner.prepare({'id':book['id'],'profile':'lite'});self.assertEqual(job['profile'],'lite');self.assertEqual(job['transport'],'terminal')
+        self.assertEqual(cleaner.prepare({'id':book['id']})['transport'],'api')
+        with self.assertRaises(CleanError):cleaner.prepare({'id':book['id'],'profile':'other'})
+        cleaner.configure({'inherit':True},'lite');self.assertTrue(cleaner.config('lite')['inherited']);self.assertEqual(cleaner.config('lite')['transport'],'api')
+
+    def test_lite_jobs_wait_their_turn(self):
+        books=[self.lib.uploads.save(TEXT.encode(),f'{n}.txt',f'排队{n}','') for n in range(3)]
+        jobs=[self.lib.cleaner.prepare({'id':b['id'],'profile':'lite'}) for b in books]
+        release=threading.Event();order=[]
+        def slow(segment,*args):
+            order.append(threading.current_thread().name);release.wait(3);return suggestions(segment)
+        with patch.object(ClaudeClient,'analyze',side_effect=slow):
+            self.lib.cleaner.start(jobs[0]['id'])
+            with self.assertRaises(CleanError):self.lib.cleaner.start(jobs[1]['id'])
+            self.assertEqual(self.lib.cleaner.start(jobs[1]['id'],queue=True)['status'],'queued')
+            third=self.lib.cleaner.start(jobs[2]['id'],queue=True);self.assertEqual(third['queue_position'],2)
+            self.assertEqual(self.lib.cleaner.cancel(jobs[2]['id'])['status'],'paused','a queued book can be taken out')
+            release.set();deadline=time.time()+5
+            while time.time()<deadline and self.lib.cleaner.public(jobs[1]['id'])['status']!='ready':time.sleep(.01)
+        self.assertEqual([self.lib.cleaner.public(j['id'])['status'] for j in jobs],['ready','ready','paused'])
 
     def test_bad_uploads_write_nothing(self):
         for raw,name,title in [(b'x','a.pdf','书'),(b'','a.txt','书'),(TEXT.encode(),'a.txt',' 《》 '),(b'not a zip','a.epub','书')]:

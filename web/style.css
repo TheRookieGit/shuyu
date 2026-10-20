@@ -588,8 +588,8 @@ main{padding:27px 18px 0}
 #tree-summary .remote-addresses{overflow-wrap:anywhere}
 @media(max-width:760px){
   .tree-dialog{width:100vw}
-  #tree-button{width:38px;height:38px;padding:0;border-radius:50%}
-  #tree-button span:last-child{display:none}
+  #tree-button,#lite-link{width:38px;height:38px;padding:0;border-radius:50%}
+  #tree-button span:last-child,#lite-link span:last-child{display:none}
   .tree-row,.tree-book button{grid-template-columns:14px 18px minmax(0,1fr);padding:11px 8px 11px calc(6px + min(var(--depth),6)*12px);row-gap:2px}
   .tree-count{grid-column:3}
   .tree-bar{left:calc(6px + min(var(--depth),6)*12px)}
