@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from ai_cleaner import CleanError, MODEL, SCHEMA, SYSTEM
+from ai_cleaner import CleanError, MODEL, SCHEMA, system_prompt
 
 
 def find_command(configured=''):
@@ -90,9 +90,9 @@ class ClaudeTerminal:
         if not status['ready']:raise CleanError(status['message'])
         return status
 
-    def analyze(self,segment,context_before='',context_after='',categories=()):
+    def analyze(self,segment,context_before='',context_after='',categories=(),instruction=''):
         result,usage=self.generate({'enabled_categories':list(categories),'context_before':context_before,
-                           'segment':segment,'context_after':context_after},SYSTEM,SCHEMA)
+                           'segment':segment,'context_after':context_after},system_prompt(instruction),SCHEMA)
         if not isinstance(result.get('edits'),list):raise CleanError('Claude 命令行未返回有效的修改清单。')
         return result,usage
 

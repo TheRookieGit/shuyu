@@ -10,7 +10,8 @@ import urllib.request
 from xml.etree import ElementTree as ET
 import zipfile
 
-from ai_cleaner import Cleaner, CleanError, ClaudeClient, Document, MODEL, decode_text, plan_chunks, protect_secret, validate_edits
+from ai_cleaner import CUSTOM, SYSTEM, Cleaner, CleanError, ClaudeClient, Document, MODEL, decode_text, plan_chunks, protect_secret, system_prompt, validate_edits
+from auto_clean import OPTIONS as AUTO_OPTIONS
 from server import Handler, Library, UserError
 from tests.test_library import LibraryFixture, packed
 
@@ -175,11 +176,30 @@ class CleanerTests(LibraryFixture,unittest.TestCase):
             with urllib.request.urlopen(urllib.request.Request(base+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json'})) as response:return json.load(response)
         try:
             self.assertIn(b'openCleanup',get('/ai.js'));self.assertNotIn(b'synthetic-test-key',get('/api/ai/config'))
+            self.assertIn(b'lite.js',get('/lite/'));self.assertIn(b'lite.js',get('/lite'));self.assertIn(b'/api/clean/prepare',get('/lite/lite.js'))
             job=post('/api/clean/prepare',{'id':self.uid});job,_=self.complete(job)
             version=post('/api/clean/save',{'job_id':job['id'],'selected':job['defaults']})
             book=json.loads(get('/api/book?id='+self.uid));self.assertEqual(book['versions'][0]['id'],version['id'])
             self.assertEqual(book['version_count'],2)
         finally:server.shutdown();server.server_close();thread.join()
+
+    def test_custom_instruction_checks_whole_text_and_is_never_automatic(self):
+        with self.assertRaises(CleanError):self.ai.prepare({'id':self.uid,'categories':['custom']})
+        with self.assertRaises(CleanError):self.ai.prepare({'id':self.uid,'categories':['custom'],'instruction':'改'*1001})
+        original=self.source.read_bytes()
+        job=self.ai.prepare({'id':self.uid,'categories':['custom'],'instruction':'  把「她」改成「小林」 '})
+        self.assertEqual(job['options']['instruction'],'把「她」改成「小林」');self.assertEqual(job['chunks'],1)
+        self.assertEqual(plan_chunks('普通的正常小说。','focused',{CUSTOM}),[{'start':0,'end':8}])
+        calls=[]
+        def custom(segment,*args):calls.append(args);return {'edits':[edit('她走进','小林走进','custom',.95)]},{}
+        job,_=self.complete(job,custom)
+        self.assertEqual(calls[0][2:],(['custom'],'把「她」改成「小林」'))
+        self.assertEqual(job['defaults'],[job['patches'][0]['id']])
+        version=self.ai.save({'job_id':job['id'],'selected':job['defaults']})
+        self.assertIn('小林走进图□馆',Document(self.lib.version_path(self.lib.book(self.uid),version['id'])).text)
+        self.assertEqual(self.source.read_bytes(),original)
+        self.assertEqual(self.ai.prepare({'id':self.uid,'instruction':'不该带上'})['options']['instruction'],'')
+        self.assertNotIn(CUSTOM,AUTO_OPTIONS['categories'])
 
 
 class ClaudeContractTests(unittest.TestCase):
@@ -197,7 +217,9 @@ class ClaudeContractTests(unittest.TestCase):
             path,headers,body=captured[0];self.assertEqual(path,'/v1/messages');self.assertEqual({k.lower():v for k,v in headers.items()}['x-api-key'],'fake-contract-key')
             self.assertEqual(body['model'],'claude-haiku-5-5');self.assertEqual(body['output_config']['format']['type'],'json_schema')
             self.assertEqual(body['thinking'],{'type':'disabled'});self.assertNotIn('temperature',body)
-            self.assertEqual(json.loads(body['messages'][0]['content'])['segment'],'合成文字')
+            self.assertEqual(json.loads(body['messages'][0]['content'])['segment'],'合成文字');self.assertEqual(body['system'],SYSTEM)
+            client.analyze('合成文字',categories=['custom'],instruction='统一人名');self.assertTrue(captured[1][2]['system'].endswith('统一人名'))
+            self.assertEqual(system_prompt('统一人名'),captured[1][2]['system'])
             for stop in ['refusal','max_tokens']:
                 reply['stop_reason']=stop
                 with self.assertRaises(CleanError):client.analyze('合成文字')

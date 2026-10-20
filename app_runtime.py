@@ -23,7 +23,7 @@ class AppHTTPServer(ThreadingHTTPServer):
 
 def code_fingerprint(base):
     base = Path(base).resolve()
-    paths = sorted([*base.glob('*.py'), *(p for p in (base/'web').rglob('*') if p.is_file())])
+    paths = sorted([*base.glob('*.py'), *(p for folder in ('web','lite') for p in (base/folder).rglob('*') if p.is_file())])
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.relative_to(base).as_posix().encode('utf-8'))

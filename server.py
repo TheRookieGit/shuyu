@@ -445,7 +445,9 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
-    STATIC = {'/':'index.html','/app.js':'app.js','/ai.js':'ai.js','/classification.js':'classification.js','/wishlist.js':'wishlist.js','/tree.js':'tree.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','ai.js','classification.js','wishlist.js','tree.js','style.css','favicon.svg')},
+              # Shuyu Lite: a separate page for AI processing only, on the same backend.
+              '/lite/':'lite/index.html','/lite/lite.js':'lite/lite.js','/lite/lite.css':'lite/lite.css'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
     # These act on the Windows machine itself, so other computers may not call them.
     LOCAL_ONLY = {'/api/runtime/reload','/api/app/show','/api/open','/api/reveal','/api/access/password'}
@@ -574,8 +576,9 @@ class Handler(BaseHTTPRequestHandler):
                 try:return self.send_file(path,name)
                 finally:
                     if temporary:path.unlink(missing_ok=True)
+            if url.path=='/lite':return self.send_content(301,'text/plain; charset=utf-8',b'',{'Location':'/lite/'})
             if url.path in self.STATIC:
-                path = BASE/'web'/self.STATIC[url.path]
+                path = BASE/self.STATIC[url.path]
                 return self.send_content(200,(mimetypes.guess_type(path.name)[0] or 'text/plain')+'; charset=utf-8',path.read_bytes(),
                     {'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'none'; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
             return self.json({'error':'Not found'},404)

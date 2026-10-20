@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#33594b">
+  <meta name="description" content="书屿 Lite：只做一件事，用 Claude 清理小说或按你的要求修改，确认后另存为新版本。">
+  <title>书屿 Lite · 小说 AI 处理</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="lite.css?v=dev">
+  <script defer src="lite.js?v=dev"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./"><img src="../favicon.svg" alt=""><span>书屿 Lite<small>小说 AI 处理</small></span></a>
+    <nav class="top-links"><a href="../">完整版书屿</a><button id="logout" class="link-button" type="button" hidden>退出登录</button></nav>
+  </header>
+
+  <main>
+    <section id="login" class="card" hidden>
+      <h1>登录书屿</h1>
+      <form id="login-form">
+        <div id="login-server-field" hidden><label class="label" for="login-server">网页版地址</label><input id="login-server" type="url" placeholder="例如 https://windows-pc.tail1234.ts.net" autocomplete="url" spellcheck="false"></div>
+        <label class="label" for="login-password">访问密码</label><input id="login-password" type="password" autocomplete="current-password" required>
+        <p id="login-message" class="hint"></p>
+        <div class="row"><button class="button primary" type="submit">登录</button><button id="login-change-server" class="link-button" type="button" hidden>更换网页版地址</button></div>
+      </form>
+    </section>
+
+    <div id="app" hidden>
+      <p class="intro">从 Windows 书库里选一本 TXT 或 EPUB，让 Claude 找出要改的地方。每一处都由你确认，确认后另存为这本书的新版本，<strong>原文件和已有版本都不会改动</strong>。</p>
+      <button id="resume" class="resume" type="button" hidden></button>
+
+      <section id="pick" class="card">
+        <h2><span class="step">1</span>选一本小说</h2>
+        <div id="search-area">
+          <input id="search" type="search" placeholder="搜索书名或作者；留空显示最近发现的书" autocomplete="off">
+          <p id="result-count" class="hint"></p>
+          <div id="results" class="results"></div>
+        </div>
+        <div id="chosen" hidden>
+          <div class="chosen-book"><div><strong id="chosen-title"></strong><span id="chosen-meta"></span></div><button id="change-book" class="link-button" type="button">换一本</button></div>
+          <label class="label" for="version">处理哪个版本</label><select id="version"></select>
+        </div>
+      </section>
+
+      <section id="setup" class="card" hidden>
+        <h2><span class="step">2</span>要做什么</h2>
+        <form id="setup-form">
+          <div class="choices">
+            <label class="check"><input name="task" type="checkbox" value="author_note" checked>删除作者有话说 / 广告</label>
+            <label class="check"><input name="task" type="checkbox" value="garbled" checked>修复乱码</label>
+            <label class="check"><input name="task" type="checkbox" value="censored" checked>推测屏蔽字</label>
+            <label class="check"><input name="task" type="checkbox" value="custom" id="custom-toggle">按我的要求修改</label>
+          </div>
+          <div id="custom-fields" hidden>
+            <label class="label" for="instruction">你的要求</label>
+            <textarea id="instruction" rows="3" maxlength="1000" placeholder="例如：把「小林」统一改成「林小」；删除每章末尾的「本章完」。"></textarea>
+            <p class="hint">写清楚要改什么、改成什么。Claude 只做局部修改，不会改写情节；没把握的地方会保持原样。</p>
+          </div>
+          <div class="options">
+            <label>检查方式<select id="mode"><option value="focused">优先检查疑似片段（较省用量）</option><option value="full">逐段检查全文（用量较大）</option></select></label>
+            <label>文本编码<select id="encoding"><option value="auto">自动识别</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="big5">Big5</option><option value="utf-16">UTF-16</option></select></label>
+          </div>
+          <p id="mode-hint" class="hint">疑似片段检查可能漏掉没有明显标记的内容。屏蔽字只是根据上下文推测，不能保证是原文；乱码和屏蔽字的建议默认不勾选。</p>
+          <p id="setup-error" class="notice" hidden></p>
+          <button class="button primary" type="submit">生成处理计划</button>
+          <p class="hint">生成计划只在 Windows 电脑上读文件，不会发送任何内容。</p>
+        </form>
+      </section>
+
+      <section id="review" class="card" hidden>
+        <h2><span class="step">3</span>检查并确认</h2>
+        <p id="job-summary" class="hint"></p>
+        <p id="job-instruction" class="instruction" hidden></p>
+        <progress id="progress" max="1" value="0"></progress>
+        <p id="job-status" role="status"></p>
+        <p id="job-error" class="notice" hidden></p>
+        <div class="row"><button id="start" class="button primary" type="button">发送片段给 Claude，开始检查</button><button id="stop" class="button" type="button" hidden>停止后续请求</button><button id="discard" class="link-button" type="button">放弃这个任务</button></div>
+        <div id="patches"></div><div id="pages" class="pages"></div>
+        <div id="save-panel" hidden>
+          <div class="row"><button id="select-none" class="link-button" type="button">全部取消选择</button><span id="selection" class="hint"></span></div>
+          <label class="label" for="label">新版本名称（可选）</label><input id="label" maxlength="80" placeholder="例如：去作者话 · 统一人名">
+          <button id="save" class="button primary" type="button">另存为新版本</button>
+        </div>
+      </section>
+
+      <section id="done" class="card" hidden>
+        <h2>已另存为新版本</h2>
+        <p id="done-message"></p>
+        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="again" class="button" type="button">再处理一本</button></div>
+        <p class="hint">新版本已经收在这本书里，也可以在完整版书屿的书目详情里找到。</p>
+      </section>
+    </div>
+  </main>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

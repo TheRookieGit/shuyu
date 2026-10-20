@@ -1,0 +1,63 @@
+const {JSDOM,VirtualConsole}=require('jsdom');
+const {spawn}=require('node:child_process');
+const {readFileSync}=require('node:fs');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..');
+const child=spawn('python',['-u',path.join(__dirname,'fixture_server.py')],{cwd:root,stdio:['pipe','pipe','pipe'],windowsHide:true});
+let dom;
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function waitFor(fn,label){const deadline=Date.now()+6000;while(Date.now()<deadline){if(fn())return;await delay(20);}throw new Error('Timed out: '+label);}
+async function run(){
+  const base=await new Promise((resolve,reject)=>{let output='';child.stdout.on('data',chunk=>{output+=chunk;const m=output.match(/READY (http:\/\/[^\s]+)/);if(m)resolve(m[1]);});child.on('error',reject);child.on('exit',code=>reject(new Error('Fixture server exited: '+code)));setTimeout(()=>reject(new Error('Fixture startup timed out')),8000).unref();});
+  const errors=[],requests=[];
+  const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',error=>errors.push(error));
+  dom=new JSDOM(readFileSync(path.join(root,'lite/index.html'),'utf8'),{url:base+'/lite/',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole});
+  const w=dom.window,d=w.document,$=selector=>d.querySelector(selector),$$=selector=>[...d.querySelectorAll(selector)];
+  w.fetch=(url,options)=>{requests.push({url:String(url),options});return fetch(new URL(url,base),options);};
+  w.console.error=(...args)=>errors.push(args.map(String).join(' '));
+  const posted=route=>requests.filter(r=>r.url===route).map(r=>JSON.parse(r.options.body));
+  w.eval(readFileSync(path.join(root,'lite/lite.js'),'utf8'));
+  await waitFor(()=>!$('#app').hidden&&$$('.result').length>0,'signed in locally with recent books');
+  assert.ok($('#login').hidden);assert.ok($('#logout').hidden,'no logout on the Windows machine itself');
+  assert.ok(requests.some(r=>r.url.startsWith('/api/books?')&&r.url.includes('kind=text%2Cepub')),'only text and EPUB books');
+  console.log('PASS local session and book list limited to TXT / EPUB');
+  $('#search').value='小林';$('#search').dispatchEvent(new w.Event('input',{bubbles:true}));
+  await waitFor(()=>$$('.result').length===1&&$('.result strong').textContent==='春日','search');
+  $('.result').click();await waitFor(()=>!$('#setup').hidden,'setup step');
+  assert.equal($('#chosen-title').textContent,'春日');assert.ok($('#search-area').hidden);assert.equal($('#version').value,'');
+  const submit=()=>$('#setup-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  $('#custom-toggle').click();assert.ok(!$('#custom-fields').hidden);assert.ok($('#mode').disabled);assert.equal($('#mode').value,'full');
+  submit();assert.ok(!$('#setup-error').hidden,'custom needs an instruction');assert.equal(posted('/api/clean/prepare').length,0);
+  $('#instruction').value='把「她」改成「小林」';submit();
+  await waitFor(()=>!$('#review').hidden,'local plan');
+  assert.deepEqual(posted('/api/clean/prepare')[0],{id:posted('/api/clean/prepare')[0].id,version_id:'',mode:'full',encoding:'auto',categories:['author_note','garbled','censored','custom'],instruction:'把「她」改成「小林」'});
+  assert.match($('#job-status').textContent,/还没有发送/);assert.match($('#job-instruction').textContent,/把「她」改成「小林」/);
+  assert.ok(JSON.parse(w.localStorage.getItem('shuyu-lite-task')).id,'task remembered for resume');
+  console.log('PASS clean + custom instruction plan, full-text check, nothing sent before start');
+  $('#start').click();await waitFor(()=>$$('[data-patch]').length===3&&!$('#save-panel').hidden,'suggestions');
+  assert.match($('#patches').textContent,/自定义要求/);assert.match($('#patches').textContent,/小林走进/);assert.match($('#patches').textContent,/仅为推测/);
+  assert.match($('#selection').textContent,/2 项/,'author note and confident custom edit preselected, masked guess not');
+  $('#label').value='去作者话 · 统一人名';$('#save').click();
+  await waitFor(()=>!$('#done').hidden,'saved');
+  assert.match($('#done-message').textContent,/去作者话 · 统一人名/);assert.match($('#done-message').textContent,/2 项/);
+  assert.equal(w.localStorage.getItem('shuyu-lite-task'),null,'finished task forgotten');
+  const book=await (await fetch(new URL('/api/book?id='+posted('/api/clean/prepare')[0].id,base))).json();
+  assert.equal(book.versions[0].label,'去作者话 · 统一人名');
+  console.log('PASS review, preselection and save as a new version');
+  $('#again').click();await waitFor(()=>!$('#pick').hidden&&$('#setup').hidden&&!$('#search-area').hidden,'start over');
+  await waitFor(()=>$$('.result').length>1,'recent books again');
+  $$('.result').find(el=>el.textContent.includes('春日')).click();await waitFor(()=>!$('#setup').hidden&&$('#version').options.length===2,'new version offered');
+  assert.equal($('#version').value,book.versions[0].id,'latest version preselected');
+  $('#custom-toggle').click();submit();await waitFor(()=>!$('#review').hidden,'clean-only plan');
+  assert.equal(posted('/api/clean/prepare')[1].mode,'focused');assert.deepEqual(posted('/api/clean/prepare')[1].categories,['author_note','garbled','censored']);
+  $('#discard').click();await waitFor(()=>!$('#setup').hidden&&$('#review').hidden,'discard back to setup');
+  assert.equal(w.localStorage.getItem('shuyu-lite-task'),null);
+  console.log('PASS start over, version choice and discard');
+  assert.deepEqual(errors,[],'no frontend runtime errors');
+  console.log('All Shuyu Lite integration checks passed (DOM; visual rendering not covered).');
+}
+run().catch(error=>{console.error(error);if(dom)console.error('Visible notices:',[...dom.window.document.querySelectorAll('.notice:not([hidden])')].map(el=>el.textContent));process.exitCode=1;}).finally(async()=>{
+  await delay(180);dom?.window.close();
+  if(child.exitCode===null){child.stdin.end('stop\n');await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(2000)]);if(child.exitCode===null)child.kill();}
+});

@@ -19,9 +19,9 @@ case.setUp()
 case.scan()
 case.lib.cleaner.configure({'api_key':'synthetic-ui-key'})
 def synthetic_provider(segment,*args,**kwargs):
-    edits=[]
-    for before,after,category in [('作者有话说：谢谢支持！','','author_note'),('图□馆','图书馆','censored')]:
-        if before in segment:edits.append(dict(before=before,after=after,category=category,confidence=.98,reason='合成测试建议'))
+    edits=[];categories=args[2] if len(args)>2 else kwargs.get('categories',())
+    for before,after,category in [('作者有话说：谢谢支持！','','author_note'),('图□馆','图书馆','censored'),('她走进','小林走进','custom')]:
+        if before in segment and category in categories:edits.append(dict(before=before,after=after,category=category,confidence=.98,reason='合成测试建议'))
     return {'edits':edits},{'input_tokens':123,'output_tokens':45}
 providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
     patch.object(ClaudeTerminal,'analyze',side_effect=synthetic_provider),

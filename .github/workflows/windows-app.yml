@@ -4,7 +4,7 @@ name: Build Windows app
 on:
   push:
     branches: [main]
-    paths: ['*.py', 'web/**', 'assets/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
+    paths: ['*.py', 'web/**', 'lite/**', 'assets/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
   workflow_dispatch:
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
       - name: Build
         run: >
           pyinstaller --noconfirm --clean --windowed --name AiqiShuyu
-          --icon assets/shuyu.ico --add-data "web;web" --add-data "assets/shuyu.ico;assets" --add-data "build_info.json;."
+          --icon assets/shuyu.ico --add-data "web;web" --add-data "lite;lite" --add-data "assets/shuyu.ico;assets" --add-data "build_info.json;."
           desktop_app.py
       - name: Smoke test the packaged service
         shell: pwsh

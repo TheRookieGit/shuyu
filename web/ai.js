@@ -1,6 +1,6 @@
 'use strict';
 const cleaning={book:null,version:'',job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,generation:0,renderKey:''};
-const categoryNames={author_note:'作者话 / 广告',garbled:'乱码修复',censored:'屏蔽字推测'};
+const categoryNames={author_note:'作者话 / 广告',garbled:'乱码修复',censored:'屏蔽字推测',custom:'自定义要求'};
 async function aiSettings(){
   try{const config=await api('/api/ai/config');$('#ai-transport').value=config.transport;$('#ai-terminal-path').value=config.terminal_path;$('#ai-url').value=config.base_url;$('#ai-model').value=config.model;$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent=config.key_set?'Key 已配置；留空保持不变。':'请填写 Claude API Key，只保存在本机。';$('#ai-test-result').textContent='';$('#ai-terminal-status').textContent='可检测本机安装和订阅登录状态，检测本身不发送小说内容。';showAITransport();if(!$('#ai-settings-dialog').open)$('#ai-settings-dialog').showModal();}catch(error){onError(error);}
 }
