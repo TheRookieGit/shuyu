@@ -206,7 +206,7 @@ $('#setup-form').onsubmit=async event=>{
 function setupError(message){$('#setup-error').textContent=message;$('#setup-error').hidden=false;}
 
 // Step 3: run, review and save.
-function openJob(job){clearTimeout(lite.timer);clearTimeout(lite.batchTimer);const inBatch=!!lite.batch?.some(entry=>entry.id===job.id);$('#discard').hidden=inBatch;$('#review-back').hidden=!inBatch;lite.generation++;Object.assign(lite,{job,page:1,renderKey:''});lite.selected.clear();lite.seenDefaults.clear();$('#label').value='';$('#resume').hidden=true;showStep('review');renderJob(job);}
+function openJob(job){clearTimeout(lite.timer);clearTimeout(lite.batchTimer);const inBatch=!!lite.batch?.some(entry=>entry.id===job.id);$('#discard').hidden=inBatch;$('#review-back').hidden=!inBatch;lite.generation++;Object.assign(lite,{job,renderKey:'',open:new Set(),groupPages:{}});lite.selected.clear();lite.seenDefaults.clear();$('#label').value='';$('#resume').hidden=true;showStep('review');renderJob(job);}
 function selectionCount(){$('#selection').textContent=`已选择 ${lite.selected.size} 项修改`;$('#save').textContent=`采用 ${lite.selected.size} 项，另存为新版本`;$('#save').disabled=!lite.selected.size;}
 function renderJob(job){
   lite.job=job;
@@ -222,17 +222,41 @@ function renderJob(job){
   $('#start').hidden=['running','ready','queued'].includes(job.status);$('#start').disabled=!job.can_start&&job.chunks>0;$('#start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?(terminal?'使用本机 Claude 订阅开始检查':'发送片段给 Claude，开始检查'):'继续发送未完成的片段';
   $('#stop').hidden=!['running','queued'].includes(job.status);$('#stop').disabled=job.cancel&&job.status==='running';$('#stop').textContent=job.status==='queued'?'取消排队':job.cancel?'等待当前请求结束…':'停止后续请求';
   $('#save-panel').hidden=!['ready','paused','failed'].includes(job.status)||!job.patch_total;
-  const renderKey=JSON.stringify([job.id,job.page,job.patch_total,job.status]);
-  if(renderKey!==lite.renderKey){
-    lite.renderKey=renderKey;
-    $('#patches').innerHTML=job.patches.map(p=>`<article class="patch"><label class="patch-heading"><input type="checkbox" data-patch="${p.id}" ${lite.selected.has(p.id)?'checked':''}><strong>${names[p.category]||p.category}</strong><span>${Math.round(p.confidence*100)}% 置信度</span></label><p class="hint">${escapeHTML(p.reason)}${p.category==='censored'?' · 仅为推测，请核对。':''}</p><div class="patch-compare"><div><span>原文</span><pre>${escapeHTML(p.before)}</pre></div><div><span>${p.after?'修改为':'建议删除'}</span><pre>${p.after?escapeHTML(p.after):'（删除这段内容）'}</pre></div></div></article>`).join('');
-    $('#pages').innerHTML=job.pages>1?`<button class="button" type="button" data-page="${job.page-1}" ${job.page<=1?'disabled':''}>上一页</button><span>${job.page} / ${job.pages}</span><button class="button" type="button" data-page="${job.page+1}" ${job.page>=job.pages?'disabled':''}>下一页</button>`:'';
+  const renderKey=JSON.stringify([job.id,job.patch_total,job.status]);
+  if(renderKey!==lite.renderKey){lite.renderKey=renderKey;renderGroups(job);}
+  syncGroups();selectionCount();
+}
+// Suggestions are grouped by kind: a count per kind, one checkbox for the whole kind, details only when opened.
+const groupOrder=['author_note','garbled','censored','custom'];
+const groupHints={author_note:'删除作者有话说、求票和站点广告。',garbled:'修复乱码，默认不勾选，建议展开看看。',censored:'根据上下文推测屏蔽字，不能保证是原文，默认不勾选，建议逐条核对。',custom:'按你的要求修改。'};
+function renderGroups(job){
+  const kinds=groupOrder.filter(kind=>job.groups?.[kind]?.total);
+  $('#patches').innerHTML=kinds.map(kind=>`<section class="group" data-group="${kind}"><div class="group-head"><input type="checkbox" data-group-check="${kind}" aria-label="全选${names[kind]}"><button class="group-toggle" type="button" data-group-toggle="${kind}" aria-expanded="${lite.open.has(kind)}"><strong>${names[kind]}</strong><span data-group-count="${kind}"></span><span class="caret" aria-hidden="true">▸</span></button></div><p class="hint">${groupHints[kind]}</p><div class="group-body" data-group-body="${kind}" ${lite.open.has(kind)?'':'hidden'}></div></section>`).join('')||'<p class="hint">暂时没有修改建议。</p>';
+  kinds.filter(kind=>lite.open.has(kind)).forEach(kind=>loadGroup(kind));
+}
+function syncGroups(){
+  const groups=lite.job?.groups||{};
+  for(const kind of Object.keys(groups)){
+    const box=$(`[data-group-check="${kind}"]`);if(!box)continue;
+    const ids=groups[kind].ids,chosen=ids.filter(id=>lite.selected.has(id)).length;
+    box.checked=chosen===ids.length;box.indeterminate=chosen>0&&chosen<ids.length;
+    $(`[data-group-count="${kind}"]`).textContent=`${ids.length} 项 · 已选 ${chosen} 项`;
   }
-  selectionCount();
+  $$('[data-patch]').forEach(el=>el.checked=lite.selected.has(el.dataset.patch));
+}
+function patchHTML(p){return `<article class="patch"><label class="patch-heading"><input type="checkbox" data-patch="${p.id}" ${lite.selected.has(p.id)?'checked':''}><span>${Math.round(p.confidence*100)}% 置信度</span></label><p class="hint">${escapeHTML(p.reason)}</p><div class="patch-compare"><div><span>原文</span><pre>${escapeHTML(p.before)}</pre></div><div><span>${p.after?'修改为':'建议删除'}</span><pre>${p.after?escapeHTML(p.after):'（删除这段内容）'}</pre></div></div></article>`;}
+async function loadGroup(kind){
+  const generation=lite.generation,page=lite.groupPages[kind]||1,body=$(`[data-group-body="${kind}"]`);if(!body)return;
+  if(!body.children.length)body.innerHTML='<p class="hint">正在读取…</p>';
+  try{const data=await api('/api/clean/job?'+new URLSearchParams({job_id:lite.job.id,page,category:kind}));
+    if(generation!==lite.generation||!lite.open.has(kind))return;lite.groupPages[kind]=data.page;
+    $(`[data-group-body="${kind}"]`).innerHTML=data.patches.map(patchHTML).join('')+(data.pages>1?`<div class="pages"><button class="button" type="button" data-group-page="${kind}" data-to="${data.page-1}" ${data.page<=1?'disabled':''}>上一页</button><span>${data.page} / ${data.pages}</span><button class="button" type="button" data-group-page="${kind}" data-to="${data.page+1}" ${data.page>=data.pages?'disabled':''}>下一页</button></div>`:'');
+    syncGroups();}
+  catch(error){onError(error);}
 }
 async function refreshJob(){
   clearTimeout(lite.timer);if(!lite.job)return;const generation=lite.generation;
-  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:lite.job.id,page:lite.page}));if(generation!==lite.generation)return;renderJob(job);if(['running','queued'].includes(job.status))lite.timer=setTimeout(refreshJob,1800);}
+  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:lite.job.id}));if(generation!==lite.generation)return;renderJob(job);if(['running','queued'].includes(job.status))lite.timer=setTimeout(refreshJob,1800);}
   catch(error){if(generation===lite.generation){onError(error);lite.timer=setTimeout(refreshJob,4000);}}
 }
 async function jobAction(action){
@@ -241,9 +265,19 @@ async function jobAction(action){
   try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:lite.job.id,queue:true});await refreshJob();}catch(error){onError(error);button.disabled=false;}
 }
 $('#start').onclick=()=>jobAction('start');$('#stop').onclick=()=>jobAction('stop');
-$('#patches').onchange=event=>{const id=event.target.dataset.patch;if(!id)return;if(event.target.checked)lite.selected.add(id);else lite.selected.delete(id);selectionCount();};
-$('#select-none').onclick=()=>{lite.selected.clear();$$('[data-patch]').forEach(el=>el.checked=false);selectionCount();};
-$('#pages').onclick=event=>{const button=event.target.closest('[data-page]');if(button&&!button.disabled){lite.page=Number(button.dataset.page);refreshJob();}};
+$('#patches').onchange=event=>{
+  const kind=event.target.dataset.groupCheck,id=event.target.dataset.patch;
+  if(kind)for(const each of lite.job.groups[kind].ids)event.target.checked?lite.selected.add(each):lite.selected.delete(each);
+  else if(id)event.target.checked?lite.selected.add(id):lite.selected.delete(id);
+  syncGroups();selectionCount();
+};
+$('#patches').onclick=event=>{
+  const toggle=event.target.closest('[data-group-toggle]'),pager=event.target.closest('[data-group-page]');
+  if(toggle){const kind=toggle.dataset.groupToggle,open=!lite.open.has(kind);open?lite.open.add(kind):lite.open.delete(kind);
+    toggle.setAttribute('aria-expanded',String(open));$(`[data-group-body="${kind}"]`).hidden=!open;if(open)loadGroup(kind);}
+  if(pager&&!pager.disabled){lite.groupPages[pager.dataset.groupPage]=Number(pager.dataset.to);loadGroup(pager.dataset.groupPage);}
+};
+$('#select-none').onclick=()=>{lite.selected.clear();syncGroups();selectionCount();};
 $('#discard').onclick=async()=>{
   const job=lite.job;clearTimeout(lite.timer);lite.generation++;lite.job=null;store.set(TASK_KEY,'');
   if(job?.status==='running')try{await api('/api/clean/cancel',{job_id:job.id});}catch{}

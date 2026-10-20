@@ -472,14 +472,18 @@ class Cleaner:
             self._persist(job)
         return self.public(uid)
 
-    def public(self,uid,page=1):
+    def public(self,uid,page=1,category=''):
+        """category: page through that kind of suggestion only. groups always counts every kind, with all its ids."""
         with self.lock:
             job=self._job(uid);page=max(1,int(page));patches=sorted(job['patches'],key=lambda p:p['start']);limit=12
+            groups={}
+            for patch in patches:groups.setdefault(patch['category'],{'total':0,'ids':[]})['total']+=1;groups[patch['category']]['ids'].append(patch['id'])
+            shown=[p for p in patches if p['category']==category] if category else patches
             config=self.config(job.get('profile','main'))
             return {k:job[k] for k in ('id','book_id','title','base_version','status','encoding','progress','error','rejected','characters','send_characters','model','usage','cancel')}|{
                 'chunks':len(job['chunks']),'options':job['options'],'profile':job.get('profile','main'),
-                'queue_position':list(self.queue).index(uid)+1 if uid in self.queue else 0,'patch_total':len(patches),'patches':patches[(page-1)*limit:page*limit],
-                'defaults':[p['id'] for p in patches if p['selected']],'page':page,'pages':(len(patches)+limit-1)//limit,
+                'queue_position':list(self.queue).index(uid)+1 if uid in self.queue else 0,'patch_total':len(patches),'patches':shown[(page-1)*limit:page*limit],'groups':groups,
+                'defaults':[p['id'] for p in patches if p['selected']],'page':page,'pages':(len(shown)+limit-1)//limit,
                 'destination':'本机 Claude Code → Claude 订阅' if config['transport']=='terminal' else config['base_url'],
                 'key_set':config['key_set'],'can_start':config['can_start'],'transport':config['transport']}
 

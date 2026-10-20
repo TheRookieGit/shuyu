@@ -138,6 +138,18 @@ class CleanerTests(LibraryFixture,unittest.TestCase):
         complete,remote=self.complete(restored,lambda *args:({'edits':[]},{}))
         self.assertEqual(remote.call_count,complete['chunks']-PARALLEL)
 
+    def test_suggestions_are_counted_and_paged_by_kind(self):
+        self.source.write_text(''.join(f'第{i}章\n她走进图□馆{i}。\n作者有话说：谢谢{i}！\n' for i in range(1,15)),encoding='utf-8')
+        def many(segment,*args):
+            return {'edits':[edit(f'作者有话说：谢谢{i}！') for i in range(1,15) if f'谢谢{i}！' in segment]+
+                    [edit(f'图□馆{i}。',f'图书馆{i}。','censored') for i in range(1,15) if f'图□馆{i}。' in segment]},{}
+        job,_=self.complete(self.ai.prepare({'id':self.uid}),many)
+        self.assertEqual({k:v['total'] for k,v in job['groups'].items()},{'author_note':14,'censored':14})
+        self.assertEqual(len(job['groups']['censored']['ids']),14)
+        page=self.ai.public(job['id'],2,'censored')
+        self.assertEqual((page['pages'],len(page['patches'])),(2,2));self.assertTrue(all(p['category']=='censored' for p in page['patches']))
+        self.assertEqual(page['patch_total'],28,'the total still counts every kind')
+
     def test_fragments_are_sent_together_and_applied_in_order(self):
         self.source.write_text(''.join(f'第{i}章\n'+'甲'*4000+f'\n作者有话说：第{i}章完。\n' for i in range(1,9)),encoding='utf-8')
         job=self.ai.prepare({'id':self.uid});running=[0];peak=[0];lock=threading.Lock()

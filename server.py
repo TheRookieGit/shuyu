@@ -598,7 +598,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items(query.get('q','')))
             if url.path=='/api/auto-clean':return self.json(self.lib.auto.status())
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
-            if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1)))
+            if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1),query.get('category','')))
             if url.path=='/api/download':
                 try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
                 except PermissionError as exc:return self.json({'error':str(exc)},403)
