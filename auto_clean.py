@@ -4,6 +4,7 @@ import threading
 import time
 
 from ai_cleaner import CATEGORIES, SUPPORTED, CleanError
+from lite_upload import UPLOAD_FOLDER
 
 OPTIONS = {'mode':'focused','categories':sorted(CATEGORIES),'encoding':'auto'}
 LABEL = '自动清理版'
@@ -46,7 +47,7 @@ class AutoCleaner:
         return self.status()
 
     def enqueue(self):
-        """Queue newly found novels; the first run only records where "new" starts."""
+        """Queue newly found novels; the first run only records where "new" starts. Lite uploads are processed in Lite."""
         values = self.settings()
         if values['since'] is None:
             values['since'] = time.time()
@@ -58,9 +59,9 @@ class AutoCleaner:
             count = db.execute(f'''INSERT OR IGNORE INTO auto_clean
               SELECT b.id,b.root,'queued','','','',? FROM books b
               WHERE b.root=? AND b.missing=0 AND b.added>=? AND b.ext IN ({','.join('?' for _ in extensions)})
-              AND {self.lib.organizer.visible_sql('b')}
+              AND {self.lib.organizer.visible_sql('b')} AND b.rel NOT LIKE ?
               AND NOT EXISTS (SELECT 1 FROM book_versions v WHERE v.book_id=b.id)''',
-              (time.time(),self.lib.root,values['since'],*extensions)).rowcount
+              (time.time(),self.lib.root,values['since'],*extensions,UPLOAD_FOLDER+'/%')).rowcount
         if count:self.start()
         return count
 

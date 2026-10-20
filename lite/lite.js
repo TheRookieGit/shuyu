@@ -4,6 +4,8 @@ const $=(s,root=document)=>root.querySelector(s);
 const $$=(s,root=document)=>[...root.querySelectorAll(s)];
 const escapeHTML=(v='')=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const number=n=>new Intl.NumberFormat('zh-CN').format(n||0);
+const sizeText=n=>n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${Math.round(n/1024)} KB`:`${n} B`;
+const formatDate=n=>n?new Date(n*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'';
 const wordsText=n=>n===null||n===undefined?'字数待统计':n>=10000?`${(n/10000).toFixed(1)} 万字`:`${number(n)} 字`;
 const formats={'.txt':'TXT','.text':'TXT','.md':'MD','.epub':'EPUB','.eqpub':'EPUB'};
 const names={author_note:'作者话 / 广告',garbled:'乱码修复',censored:'屏蔽字推测',custom:'自定义要求'};
@@ -16,23 +18,46 @@ const TASK_KEY='shuyu-lite-task';
 let session={local:true};let signedIn;const authReady=new Promise(resolve=>signedIn=resolve);
 const lite={book:null,job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,renderKey:'',search:0,generation:0,version:null};
 
-async function request(path,data){const headers={};const token=store.get('shuyu-token');if(token)headers.Authorization='Bearer '+token;if(data!==undefined)headers['Content-Type']='application/json';return fetch(serverBase()+path,data===undefined?(token?{headers}:{}):{method:'POST',headers,body:JSON.stringify(data)});}
-async function api(path,data){await authReady;const response=await request(path,data);if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}const result=await response.json();if(!response.ok)throw new Error(result.error||'操作未完成');return result;}
+// The offline prompt already explains it, so these are never shown again as an error toast.
+class OfflineError extends Error{constructor(){super('连不上 Windows 电脑上的书屿');}}
+// Every request goes through here, so an unreachable Windows backend always shows the same prompt.
+// A tunnel whose backend is down answers 502–504 instead of failing to connect.
+async function reach(path,options={}){
+  const token=store.get('shuyu-token');if(token)options.headers={...options.headers,Authorization:'Bearer '+token};
+  try{const response=await fetch(serverBase()+path,options);if([502,503,504].includes(response.status))throw new TypeError('backend down');return response;}
+  catch(error){if(error instanceof TypeError){showOffline();throw new OfflineError();}throw error;}
+}
+const request=(path,data)=>reach(path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+async function api(path,data,file){
+  await authReady;const response=file?await reach(path,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file}):await request(path,data);
+  if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}
+  let result;try{result=await response.json();}catch{showOffline();throw new OfflineError();}
+  if(!response.ok)throw new Error(result.error||'操作未完成');return result;
+}
+let started=false;
+function showOffline(){const dialog=$('#offline');$('#offline-server').hidden=!hostedPage;$('#offline-detail').textContent=hostedPage?'当前连接的地址：'+serverBase():'';if(!dialog.open)dialog.showModal();}
+$('#offline').addEventListener('cancel',event=>{if(!started)event.preventDefault();});
+$('#offline-retry').onclick=async()=>{
+  const button=$('#offline-retry');button.disabled=true;$('#offline-detail').textContent='正在连接…';
+  try{const response=await fetch(serverBase()+'/api/session');if(!response.ok)throw new Error();
+    if(!started)return location.reload();$('#offline').close();toast('已重新连接');if(lite.job)refreshJob();}
+  catch{$('#offline-detail').textContent='还是连不上。确认电脑和书屿都在运行后再试一次。';}finally{button.disabled=false;}
+};
+$('#offline-server').onclick=()=>{$('#offline').close();showLogin('',true);};
 let toastTimer;
 function toast(message,error=false){const el=$('#toast');el.textContent=message;el.classList.toggle('error',error);el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,error?7000:3500);}
-function onError(error){console.error(error);toast(error.message||'连接已中断，请确认书屿后台正在运行',true);}
+function onError(error){if(error instanceof OfflineError)return;console.error(error);toast(error.message||'连接已中断，请确认书屿后台正在运行',true);}
 
-function showLogin(message=''){
+function showLogin(message='',changeServer=false){
   $('#app').hidden=true;$('#login').hidden=false;$('#logout').hidden=true;
-  const unreachable=message.startsWith('无法连接');
-  $('#login-server-field').hidden=!hostedPage||!(unreachable||store.get('shuyu-server'));$('#login-change-server').hidden=!hostedPage||!$('#login-server-field').hidden;
+  $('#login-server-field').hidden=!hostedPage||!(changeServer||store.get('shuyu-server'));$('#login-change-server').hidden=!hostedPage||!$('#login-server-field').hidden;
   $('#login-server').value=serverBase();$('#login-message').textContent=message||'输入访问密码登录。这台设备之后会保持登录，完整版书屿也一起登录。';$('#login-message').classList.toggle('notice',!!message);
 }
 $('#login-change-server').onclick=()=>{$('#login-server-field').hidden=false;$('#login-change-server').hidden=true;$('#login-server').focus();};
 $('#login-form').onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;
   try{if(hostedPage){const server=$('#login-server').value.trim().replace(/\/+$/,'');if(!/^https:\/\//.test(server))throw new Error('网页版地址需要以 https:// 开头。');store.set('shuyu-server',server===DEFAULT_SERVER?'':server);}
     const response=await request('/api/login',{password:$('#login-password').value});const result=await response.json();if(!response.ok)throw new Error(result.error||'登录失败');store.set('shuyu-token',result.token);location.reload();}
-  catch(error){showLogin(error instanceof TypeError?'无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。':error.message);button.disabled=false;}};
+  catch(error){showLogin(error.message,!$('#login-server-field').hidden);button.disabled=false;}};
 $('#logout').onclick=async()=>{try{await api('/api/logout',{});}catch{}store.set('shuyu-token','');location.reload();};
 
 // Step 1: pick a book.
@@ -46,6 +71,36 @@ async function search(){
 }
 $('#search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(search,240);};
 $('#results').onclick=event=>{const button=event.target.closest('[data-book]');if(button)chooseBook(button.dataset.book);};
+$('.source-tabs').onclick=event=>{const tab=event.target.closest('[data-source]');if(!tab)return;
+  $$('.source-tab').forEach(el=>{el.classList.toggle('active',el===tab);el.setAttribute('aria-selected',String(el===tab));});
+  $('#library-source').hidden=tab.dataset.source!=='library';$('#upload-form').hidden=tab.dataset.source!=='upload';};
+
+// Or upload one: it is saved into the Windows library and then processed like any other book.
+// Same reading of 《书名》作者：某人 file names as the backend, so the fields start out filled in.
+function guessName(name){
+  const stem=name.replace(/\.[^.]+$/,''),titled=stem.match(/《(.+?)》/);
+  const author=((stem.match(/(?:作者[：:\s]*|\s+by\s*)([^（(\[【]+)/i)||[])[1]||'').replace(/^[\s_-]+|[\s_-]+$/g,'');
+  const title=titled?titled[1]:stem.replace(/^[\[【].*?[\]】]\s*/,'').split(/作者[：:]|\s+by\s+/i)[0];
+  return {title:title.trim()||stem,author};
+}
+$('#upload-file').onchange=()=>{
+  const file=$('#upload-file').files[0];$('#upload-error').hidden=true;if(!file)return;
+  $('#upload-file-name').textContent=`${file.name} · ${(file.size/1048576).toFixed(1)} MB`;
+  const guess=guessName(file.name);$('#upload-title').value=guess.title;$('#upload-author').value=guess.author;
+};
+$('#upload-form').onsubmit=async event=>{
+  event.preventDefault();const file=$('#upload-file').files[0],button=$('button[type="submit"]',event.target);$('#upload-error').hidden=true;
+  const fail=message=>{$('#upload-error').textContent=message;$('#upload-error').hidden=false;};
+  if(!file)return fail('请选择要上传的小说文件。');
+  if(!/\.(txt|md|epub)$/i.test(file.name))return fail('只能上传 TXT、MD 或 EPUB 小说。');
+  if(file.size>64*1024*1024)return fail('只能上传 64 MB 以内的文件。');
+  if(!$('#upload-title').value.trim())return fail('请填写书名。');
+  button.disabled=true;button.textContent='正在上传到 Windows 书库…';
+  try{const book=await api('/api/lite/upload?'+new URLSearchParams({name:file.name,title:$('#upload-title').value.trim(),author:$('#upload-author').value.trim()}),undefined,file);
+    $('#upload-form').reset();$('#upload-file-name').textContent='选择 TXT、MD 或 EPUB 文件（64 MB 以内）';
+    toast('已保存到 Windows 书库：'+book.rel);await chooseBook(book.id);}
+  catch(error){fail(error.message);}finally{button.disabled=false;button.textContent='上传到 Windows 书库';}
+};
 async function chooseBook(id,versionId){
   try{
     const book=await api('/api/book?'+new URLSearchParams({id}));lite.book=book;const versions=book.versions||[];
@@ -53,6 +108,9 @@ async function chooseBook(id,versionId){
     $('#version').innerHTML=versions.map(v=>`<option value="${v.id}">${escapeHTML(v.label)}</option>`).join('')+'<option value="">原始版本</option>';
     $('#version').value=versionId??(versions[0]?.id||'');
     $('#encoding').disabled=['.epub','.eqpub'].includes(book.ext);
+    $('#version-count').textContent=`· ${versions.length+1} 个`;
+    $('#version-list').innerHTML=[...versions.map(v=>({id:v.id,label:v.label,meta:`${formatDate(v.created)} · 采用 ${v.edit_count} 项修改 · ${sizeText(v.size)}`})),{id:'',label:'原始版本',meta:book.rel.startsWith('Lite上传/')?'Lite 上传的原文件':'书库里的原文件'}]
+      .map(v=>`<li><div><strong>${escapeHTML(v.label)}</strong><span>${escapeHTML(v.meta)}</span></div><button class="button" type="button" data-download="${v.id}">下载</button></li>`).join('');
     $('#search-area').hidden=true;$('#chosen').hidden=false;showStep('setup');
   }catch(error){onError(error);}
 }
@@ -130,9 +188,12 @@ $('#save').onclick=async()=>{
     $('#done-message').textContent=`《${lite.job.title}》已另存为「${version.label}」，采用了 ${version.edit_count} 项修改。原文件和已有版本都保留着。`;showStep('done');}
   catch(error){onError(error);button.disabled=false;}
 };
-$('#download').onclick=async()=>{
-  try{const result=await api('/api/download/ticket',{id:lite.version.book_id,version_id:lite.version.id});location.href=serverBase()+result.url;}catch(error){onError(error);}
-};
+async function download(bookId,versionId){
+  try{const result=await api('/api/download/ticket',{id:bookId,version_id:versionId});toast('正在下载…');location.href=serverBase()+result.url;}catch(error){onError(error);}
+}
+$('#download').onclick=()=>download(lite.version.book_id,lite.version.id);
+$('#version-list').onclick=event=>{const button=event.target.closest('[data-download]');if(button)download(lite.book.id,button.dataset.download);};
+$('#continue').onclick=()=>{lite.job=null;chooseBook(lite.version.book_id,lite.version.id);};
 $('#again').onclick=()=>{lite.book=null;lite.job=null;lite.version=null;$('#chosen').hidden=true;$('#search-area').hidden=false;$('#search').value='';showStep();search();};
 
 // A task keeps running on the backend after the page closes, so offer to return to it.
@@ -145,7 +206,7 @@ async function offerResume(){
 
 (async()=>{
   try{const response=await request('/api/session');if(!response.ok)throw new Error();session=await response.json();}
-  catch{return showLogin('无法连接书屿后台，请确认地址正确、Windows 电脑开机且服务正在运行。');}
+  catch{return showOffline();}
   if(!session.authenticated){store.set('shuyu-token','');return showLogin();}
-  signedIn();$('#app').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
+  started=true;signedIn();$('#app').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
 })();

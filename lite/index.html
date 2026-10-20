@@ -34,13 +34,27 @@
       <section id="pick" class="card">
         <h2><span class="step">1</span>选一本小说</h2>
         <div id="search-area">
-          <input id="search" type="search" placeholder="搜索书名或作者；留空显示最近发现的书" autocomplete="off">
-          <p id="result-count" class="hint"></p>
-          <div id="results" class="results"></div>
+          <div class="source-tabs" role="tablist"><button class="source-tab active" type="button" data-source="library" role="tab" aria-selected="true">从书库选</button><button class="source-tab" type="button" data-source="upload" role="tab" aria-selected="false">上传一本</button></div>
+          <div id="library-source">
+            <input id="search" type="search" placeholder="搜索书名或作者；留空显示最近发现的书" autocomplete="off">
+            <p id="result-count" class="hint"></p>
+            <div id="results" class="results"></div>
+          </div>
+          <form id="upload-form" hidden>
+            <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub" required><span id="upload-file-name">选择 TXT、MD 或 EPUB 文件（64 MB 以内）</span></label>
+            <div class="options">
+              <label>书名<input id="upload-title" maxlength="60" required autocomplete="off"></label>
+              <label>作者（可选）<input id="upload-author" maxlength="30" autocomplete="off"></label>
+            </div>
+            <p id="upload-preview" class="hint">上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】。完整版书屿里也能看到这本书。</p>
+            <p id="upload-error" class="notice" hidden></p>
+            <button class="button primary" type="submit">上传到 Windows 书库</button>
+          </form>
         </div>
         <div id="chosen" hidden>
           <div class="chosen-book"><div><strong id="chosen-title"></strong><span id="chosen-meta"></span></div><button id="change-book" class="link-button" type="button">换一本</button></div>
           <label class="label" for="version">处理哪个版本</label><select id="version"></select>
+          <details id="versions" class="versions"><summary>全部版本与下载 <span id="version-count"></span></summary><ul id="version-list"></ul></details>
         </div>
       </section>
 
@@ -88,11 +102,18 @@
       <section id="done" class="card" hidden>
         <h2>已另存为新版本</h2>
         <p id="done-message"></p>
-        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="again" class="button" type="button">再处理一本</button></div>
-        <p class="hint">新版本已经收在这本书里，也可以在完整版书屿的书目详情里找到。</p>
+        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="continue" class="button" type="button">在这个版本上继续处理</button><button id="again" class="link-button" type="button">换一本书</button></div>
+        <p class="hint">原文件和之前的每个版本都保留着，可以在「全部版本与下载」里随时下载，也可以在完整版书屿的书目详情里找到。</p>
       </section>
     </div>
   </main>
+  <dialog id="offline" class="offline">
+    <h2>连不上 Windows 电脑上的书屿</h2>
+    <p>书屿 Lite 的书和 AI 处理都在 Windows 电脑上进行。请确认：</p>
+    <ul><li>电脑已经开机，没有睡眠；</li><li>书屿正在运行（右下角托盘里有书屿图标；关掉窗口不会停止它）；</li><li>Tailscale 已经连上。</li></ul>
+    <p id="offline-detail" class="hint"></p>
+    <div class="row"><button id="offline-retry" class="button primary" type="button">重新连接</button><button id="offline-server" class="link-button" type="button" hidden>更换网页版地址</button></div>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

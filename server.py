@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
 from platform_utils import reveal_in_explorer
-from ai_cleaner import Cleaner, CleanError
+from ai_cleaner import MAX_SOURCE, Cleaner, CleanError
 from book_classification import Classifier, TAXONOMY
 from app_runtime import bind_server, runtime_identity
 from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_ago
@@ -30,12 +30,20 @@ from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, 
 from wishlist import Wishlist
 from auto_clean import AutoCleaner
 from catalog_tree import CatalogTree
+from lite_upload import Uploads
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
 TEXT = {'.txt','.text','.md'}
 BOOKS = DOCUMENTS | ARCHIVES
 CATALOG_FIELDS = 'id,root,rel,name,title,author,ext,kind,size,mtime,added,image_count,container,entry,chain'
+UPSERT_BOOK = '''INSERT INTO books
+    (id,root,rel,name,title,author,ext,kind,size,mtime,added,seen,image_count,container,entry,chain)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    rel=excluded.rel,name=excluded.name,title=excluded.title,author=excluded.author,
+    ext=excluded.ext,kind=excluded.kind,size=excluded.size,mtime=excluded.mtime,
+    seen=excluded.seen,missing=0,image_count=excluded.image_count,
+    container=excluded.container,entry=excluded.entry,chain=excluded.chain'''
 
 
 class UserError(Exception):
@@ -106,6 +114,7 @@ class Library:
         self.wishlist = Wishlist(self)
         self.auto = AutoCleaner(self)
         self.tree = CatalogTree(self)
+        self.uploads = Uploads(self)
 
     @contextmanager
     def db(self):
@@ -165,13 +174,7 @@ class Library:
             if not pending:
                 return
             with self.db() as db:
-                db.executemany('''INSERT INTO books
-                (id,root,rel,name,title,author,ext,kind,size,mtime,added,seen,image_count,container,entry,chain)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-                rel=excluded.rel,name=excluded.name,title=excluded.title,author=excluded.author,
-                ext=excluded.ext,kind=excluded.kind,size=excluded.size,mtime=excluded.mtime,
-                seen=excluded.seen,missing=0,image_count=excluded.image_count,
-                container=excluded.container,entry=excluded.entry,chain=excluded.chain''',pending)
+                db.executemany(UPSERT_BOOK,pending)
             pending.clear()
         def add(path,ext,size,modified,image_count=0,leaf=None):
             source_rel = path.relative_to(root).as_posix()
@@ -262,6 +265,24 @@ class Library:
         finally:
             self.scan_state.update(running=False,phase='')
             self.scan_lock.release()
+
+    def register(self,path):
+        """Index one text or EPUB file just written into the library, without waiting for the next scan."""
+        root_string = self.root;rel = path.relative_to(Path(root_string)).as_posix();stat = path.stat()
+        title,author = metadata(path.name);ext = path.suffix.lower()
+        uid = self.identity(root_string,rel,[])
+        with self.db() as db:
+            db.execute(UPSERT_BOOK,(uid,root_string,rel,path.name,title,author,ext,'text' if ext in TEXT else 'epub',
+                                    stat.st_size,stat.st_mtime,time.time(),str(time.time_ns()),0,'','','[]'))
+        self.classifier.measure(uid);self.organizer.refresh();self.wishlist.match()
+        if self.scan_state['running']:
+            # A scan that already walked past the folder would mark the file missing; look again once it ends.
+            threading.Thread(target=self._scan_after_current,daemon=True).start()
+        return uid
+
+    def _scan_after_current(self):
+        with self.scan_lock:pass
+        self.start_scan()
 
     def after_scan(self):
         with self.db() as db:
@@ -549,6 +570,17 @@ class Handler(BaseHTTPRequestHandler):
                 info['addresses'] = [f'http://{a}:{self.server.server_port}' for a in lan_addresses()]
         return info
 
+    def upload(self):
+        # The file is the raw request body; its name, title and author come in the query string.
+        query = {k:v[-1] for k,v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
+        try:
+            length = int(self.headers.get('Content-Length','0'))
+            if not 0<length<=MAX_SOURCE:raise UserError('只能上传 64 MB 以内的文件。')
+            raw = self.rfile.read(length)
+            return self.json(self.lib.uploads.save(raw,query.get('name',''),query.get('title',''),query.get('author','')))
+        except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+        except (UserError,CleanError,OSError,ValueError) as exc:self.json({'error':str(exc)},400)
+
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
         if not self.guard(url.path):return
@@ -587,6 +619,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.guard(self.path):return
+        if urllib.parse.urlsplit(self.path).path=='/api/lite/upload':return self.upload()
         if self.headers.get('Content-Type','').split(';')[0]!='application/json':
             return self.json({'error':'Expected JSON'},415)
         try:

@@ -14,8 +14,17 @@ async function run(){
   const virtualConsole=new VirtualConsole();virtualConsole.on('jsdomError',error=>errors.push(error));
   dom=new JSDOM(readFileSync(path.join(root,'lite/index.html'),'utf8'),{url:base+'/lite/',runScripts:'outside-only',pretendToBeVisual:true,virtualConsole});
   const w=dom.window,d=w.document,$=selector=>d.querySelector(selector),$$=selector=>[...d.querySelectorAll(selector)];
-  w.fetch=(url,options)=>{requests.push({url:String(url),options});return fetch(new URL(url,base),options);};
+  let offline=false;
+  w.fetch=async(url,options)=>{
+    requests.push({url:String(url),options});
+    if(offline)throw new w.TypeError('fetch failed');
+    // A jsdom File is not something Node's fetch can send; hand over its bytes instead.
+    if(options?.body instanceof w.Blob)options={...options,body:Buffer.from(await options.body.arrayBuffer())};
+    return fetch(new URL(url,base),options);
+  };
   w.console.error=(...args)=>errors.push(args.map(String).join(' '));
+  w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
+  w.HTMLDialogElement.prototype.close=function(){if(!this.open)return;this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   const posted=route=>requests.filter(r=>r.url===route).map(r=>JSON.parse(r.options.body));
   w.eval(readFileSync(path.join(root,'lite/lite.js'),'utf8'));
   await waitFor(()=>!$('#app').hidden&&$$('.result').length>0,'signed in locally with recent books');
@@ -54,6 +63,31 @@ async function run(){
   $('#discard').click();await waitFor(()=>!$('#setup').hidden&&$('#review').hidden,'discard back to setup');
   assert.equal(w.localStorage.getItem('shuyu-lite-task'),null);
   console.log('PASS start over, version choice and discard');
+  $('[data-source="upload"]').click();assert.ok($('#library-source').hidden);assert.ok(!$('#upload-form').hidden);
+  const file=new w.File(['第一章 秋水\n作者有话说：谢谢支持！\n故事继续。\n'],'【精校】《秋水》作者：庄周（完结）.txt',{type:'text/plain'});
+  Object.defineProperty($('#upload-file'),'files',{value:[file],configurable:true});$('#upload-file').dispatchEvent(new w.Event('change'));
+  assert.equal($('#upload-title').value,'秋水');assert.equal($('#upload-author').value,'庄周');
+  $('#upload-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await waitFor(()=>!$('#setup').hidden&&$('#chosen-title').textContent==='秋水','uploaded book chosen');
+  const upload=requests.find(r=>r.url.startsWith('/api/lite/upload?'));
+  assert.equal(new URLSearchParams(upload.url.split('?')[1]).get('author'),'庄周');assert.equal(upload.options.headers['Content-Type'],'application/octet-stream');
+  assert.match($('#toast').textContent,/Lite上传\/《秋水》作者：庄周【lite上传】\.txt/);
+  assert.equal($$('#version-list li').length,1);assert.match($('#version-list').textContent,/Lite 上传的原文件/);
+  $('#custom-toggle').checked=false;$('#setup-form').dispatchEvent(new w.Event('change'));
+  submit();await waitFor(()=>!$('#review').hidden,'upload plan');
+  $('#start').click();await waitFor(()=>!$('#save-panel').hidden,'upload suggestions');
+  $('#save').click();await waitFor(()=>!$('#done').hidden,'upload saved');
+  $('#continue').click();await waitFor(()=>!$('#setup').hidden&&$$('#version-list li').length===2,'continue on the new version');
+  assert.equal($('#version').value,$('[data-download]').dataset.download,'newest version chosen');
+  $$('[data-download]').at(-1).click();await waitFor(()=>requests.some(r=>r.url==='/api/download/ticket'),'download original');
+  assert.equal(JSON.parse(requests.find(r=>r.url==='/api/download/ticket').options.body).version_id,'');
+  console.log('PASS upload into the Windows library, named by title and author, versions kept and downloadable');
+  offline=true;$('#search-area').hidden=false;$('#search').value='春';$('#search').dispatchEvent(new w.Event('input',{bubbles:true}));
+  await waitFor(()=>$('#offline').open,'offline prompt');
+  offline=false;$('#offline-retry').click();await waitFor(()=>!$('#offline').open&&/已重新连接/.test($('#toast').textContent),'reconnected');
+  console.log('PASS prompt when the Windows backend cannot be reached, and reconnect');
+  // jsdom cannot follow the download link itself; everything else must be error-free.
+  errors.splice(0,errors.length,...errors.filter(error=>!/navigation/i.test(String(error.message||error))));
   assert.deepEqual(errors,[],'no frontend runtime errors');
   console.log('All Shuyu Lite integration checks passed (DOM; visual rendering not covered).');
 }
