@@ -100,7 +100,10 @@ async function readOpening(file){
   if(bytes[0]===0xff&&bytes[1]===0xfe||bytes[0]===0xfe&&bytes[1]===0xff)return new TextDecoder('utf-16').decode(bytes);
   try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes,{stream:true});}catch{return new TextDecoder('gb18030').decode(bytes);}
 }
+const ARCHIVE=/\.(zip|rar|7z|tar|gz|bz2|xz)$/i;
 async function detectNames(file){
+  // An archive is unpacked on the Windows side, where every novel inside gets its own title and author.
+  if(ARCHIVE.test(file.name))return {archive:true,title:'',author:''};
   const named=nameFromFile(file.name),epub=/\.epub$/i.test(file.name);
   let inner={title:'',author:''};if(!epub)try{inner=nameFromText(await readOpening(file));}catch{}
   // An EPUB's own title and author are read on the Windows side when the file name does not name the book.
@@ -109,8 +112,8 @@ async function detectNames(file){
 function renderUploads(){
   $('#upload-list').hidden=!lite.uploads.length;
   $('#upload-list').innerHTML=lite.uploads.map((item,i)=>`<li><div class="upload-file"><span>${escapeHTML(item.file.name)} · ${sizeText(item.file.size)}</span><button class="link-button" type="button" data-remove="${i}">移除</button></div>
-    <div class="options"><label>书名<input data-index="${i}" data-field="title" maxlength="60" value="${escapeHTML(item.title)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label>
-    <label>作者<input data-index="${i}" data-field="author" maxlength="30" value="${escapeHTML(item.author)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label></div></li>`).join('');
+    ${item.archive?'<p class="hint">压缩包：上传后自动解压，识别里面每本小说的书名和作者。</p>':`<div class="options"><label>书名<input data-index="${i}" data-field="title" maxlength="60" value="${escapeHTML(item.title)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label>
+    <label>作者<input data-index="${i}" data-field="author" maxlength="30" value="${escapeHTML(item.author)}" placeholder="${item.epub?'上传时读取电子书里的信息':'没有识别到'}"></label></div>`}</li>`).join('');
   $('button[type="submit"]',$('#upload-form')).textContent=lite.uploads.length>1?`上传这 ${lite.uploads.length} 本到 Windows 书库`:'上传到 Windows 书库';
 }
 $('#upload-file').onchange=async()=>{
@@ -126,20 +129,26 @@ $('#upload-form').onsubmit=async event=>{
   const fail=message=>{$('#upload-error').textContent=message;$('#upload-error').hidden=false;};
   if(!lite.uploads.length)return fail('请选择要上传的小说文件。');
   for(const item of lite.uploads){
-    if(!/\.(txt|md|epub)$/i.test(item.file.name))return fail(`${item.file.name}：只能上传 TXT、MD 或 EPUB 小说。`);
-    if(item.file.size>64*1024*1024)return fail(`${item.file.name}：只能上传 64 MB 以内的文件。`);
+    if(!item.archive&&!/\.(txt|md|epub)$/i.test(item.file.name))return fail(`${item.file.name}：只能上传 TXT、MD、EPUB 小说或压缩包。`);
+    if(item.file.size>(item.archive?512:64)*1024*1024)return fail(`${item.file.name}：只能上传 ${item.archive?'512 MB 以内的压缩包':'64 MB 以内的小说'}。`);
     if(item.edited.title&&!item.title.trim())return fail(`${item.file.name}：请填写书名。`);
   }
-  button.disabled=true;const books=[],failed=[],total=lite.uploads.length;
+  button.disabled=true;const books=[],failed=[],notes=[],total=lite.uploads.length;
   for(const [i,item] of lite.uploads.entries()){
     button.textContent=total>1?`正在上传 ${i+1} / ${total}…`:'正在上传到 Windows 书库…';
-    try{books.push(await api('/api/lite/upload?'+new URLSearchParams({name:item.file.name,...Object.fromEntries(['title','author'].filter(key=>item.edited[key]).map(key=>[key,item[key].trim()]))}),undefined,item.file));item.done=true;}
+    try{
+      const result=await api('/api/lite/upload?'+new URLSearchParams({name:item.file.name,...Object.fromEntries(['title','author'].filter(key=>item.edited[key]).map(key=>[key,item[key].trim()]))}),undefined,item.file);
+      if(result.books){
+        books.push(...result.books);
+        notes.push(`${item.file.name}：取出 ${result.books.length} 本小说${result.other_files?`，另有 ${result.other_files} 个 PDF、Word 等文件没有导入`:''}${result.failed.length?`；${result.failed.length} 处没能取出：${result.failed.slice(0,3).join('；')}`:''}`);
+      }else books.push(result);
+      item.done=true;}
     catch(error){if(error instanceof OfflineError)break;failed.push(`${item.file.name}：${error.message}`);}
   }
   button.disabled=false;
   // Only the books that did not go up stay in the list, ready to try again.
   lite.uploads=lite.uploads.filter(item=>!item.done);renderUploads();
-  if(failed.length)fail(`有 ${failed.length} 本没有上传：\n`+failed.join('\n'));
+  if(failed.length||notes.length)fail([...(failed.length?[`有 ${failed.length} 个文件没有上传：`,...failed]:[]),...notes].join('\n'));
   if(!books.length)return;
   toast(books.length>1?`已保存 ${books.length} 本到 Windows 书库的 Lite上传 文件夹`:'已保存到 Windows 书库：'+books[0].rel);
   if(books.length===1)await chooseBook(books[0].id);else chooseBatch(books);

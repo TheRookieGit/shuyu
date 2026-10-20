@@ -123,6 +123,16 @@ async function run(){
   $('#batch-close').click();await waitFor(()=>!$('#pick').hidden&&$('#batch').hidden,'batch closed');
   assert.equal(w.localStorage.getItem('shuyu-lite-batch'),null);
   console.log('PASS several uploads at once, processed one after another, each reviewed and saved');
+  $('[data-source="upload"]').click();
+  const zipped=Buffer.from(require('node:child_process').execFileSync('python',['-c',"import io,zipfile,base64,sys;b=io.BytesIO();z=zipfile.ZipFile(b,'w');z.writestr('《压缩甲》作者：某人.txt','第一章\\n作者有话说：谢谢支持！\\n'.encode());z.writestr('内/新建文本文档.txt','书名：压缩乙\\n作者：别人\\n正文。'.encode());z.writestr('附录.pdf',b'%PDF');z.close();sys.stdout.write(base64.b64encode(b.getvalue()).decode())"]).toString(),'base64');
+  choose(new w.File([zipped],'两本合集.zip'));await waitFor(()=>$$('#upload-list li').length===1,'archive listed');
+  assert.match($('#upload-list').textContent,/自动解压/);assert.equal($$('#upload-list [data-field]').length,0,'no name fields for an archive');
+  $('#upload-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await waitFor(()=>!$('#setup').hidden&&!$('#batch-chosen').hidden,'novels from the archive form a batch');
+  assert.match($('#batch-count').textContent,/2 本/);assert.match($('#batch-titles').textContent,/压缩甲/);assert.match($('#batch-titles').textContent,/压缩乙/);
+  assert.match($('#upload-error').textContent,/取出 2 本小说，另有 1 个 PDF/);
+  $('#batch-change').click();
+  console.log('PASS archives unpacked on the Windows side, every novel named and kept');
   $('#ai-open').click();await waitFor(()=>$('#ai-dialog').open&&/沿用完整版/.test($('#ai-inherited').textContent),'Lite settings follow the full page at first');
   $('#ai-transport').value='terminal';$('#ai-transport').dispatchEvent(new w.Event('change'));assert.ok($('#ai-api').hidden);
   $('#ai-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await waitFor(()=>!$('#ai-dialog').open,'Lite settings saved');

@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
 from platform_utils import reveal_in_explorer
-from ai_cleaner import MAX_SOURCE, Cleaner, CleanError
+from ai_cleaner import Cleaner, CleanError
 from book_classification import Classifier, TAXONOMY
 from app_runtime import bind_server, runtime_identity
 from catalog_organizer import CatalogOrganizer, PUBLICATION_STATES, six_months_ago
@@ -30,7 +30,7 @@ from remote_access import RemoteAccess, SESSION_DAYS, LOCAL_HOSTS, is_loopback, 
 from wishlist import Wishlist
 from auto_clean import AutoCleaner
 from catalog_tree import CatalogTree
-from lite_upload import Uploads, is_version_file
+from lite_upload import Uploads, skipped_by_scan
 from book_names import metadata
 
 BASE = Path(__file__).resolve().parent
@@ -52,7 +52,7 @@ class UserError(Exception):
 
 
 class Library:
-    def __init__(self,data_dir,root=None,interval=300,background=False):
+    def __init__(self,data_dir,root=None,interval=3600,background=False):
         # background: after each scan, also count new books locally and queue them for automatic cleanup.
         self.background = background
         self.data_dir = Path(data_dir).resolve()
@@ -211,7 +211,7 @@ class Library:
                 for name in files:
                     if name.startswith('.') or name.startswith('~$'):
                         continue
-                    if is_version_file(Path(current)/name,root):
+                    if skipped_by_scan(Path(current)/name,root):
                         continue
                     path = Path(current)/name
                     ext = path.suffix.lower()
@@ -257,19 +257,22 @@ class Library:
             self.scan_state.update(running=False,phase='')
             self.scan_lock.release()
 
-    def register(self,path):
-        """Index one text or EPUB file just written into the library, without waiting for the next scan."""
-        root_string = self.root;rel = path.relative_to(Path(root_string)).as_posix();stat = path.stat()
-        title,author = metadata(path.name);ext = path.suffix.lower()
-        uid = self.identity(root_string,rel,[])
-        with self.db() as db:
-            db.execute(UPSERT_BOOK,(uid,root_string,rel,path.name,title,author,ext,'text' if ext in TEXT else 'epub',
-                                    stat.st_size,stat.st_mtime,time.time(),str(time.time_ns()),0,'','','[]'))
-        self.classifier.measure(uid);self.organizer.refresh();self.wishlist.match()
+    def register(self,*paths):
+        """Index text or EPUB files just written into the library, without waiting for the next scan."""
+        root_string = self.root;uids = []
+        for path in paths:
+            rel = path.relative_to(Path(root_string)).as_posix();stat = path.stat()
+            title,author = metadata(path.name);ext = path.suffix.lower()
+            uid = self.identity(root_string,rel,[]);uids.append(uid)
+            with self.db() as db:
+                db.execute(UPSERT_BOOK,(uid,root_string,rel,path.name,title,author,ext,'text' if ext in TEXT else 'epub',
+                                        stat.st_size,stat.st_mtime,time.time(),str(time.time_ns()),0,'','','[]'))
+            self.classifier.measure(uid)
+        self.organizer.refresh();self.wishlist.match()
         if self.scan_state['running']:
-            # A scan that already walked past the folder would mark the file missing; look again once it ends.
+            # A scan that already walked past the folder would mark the files missing; look again once it ends.
             threading.Thread(target=self._scan_after_current,daemon=True).start()
-        return uid
+        return uids
 
     def _scan_after_current(self):
         with self.scan_lock:pass
@@ -571,11 +574,8 @@ class Handler(BaseHTTPRequestHandler):
         # The file is the raw request body; its name, title and author come in the query string.
         query = {k:v[-1] for k,v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True).items()}
         try:
-            length = int(self.headers.get('Content-Length','0'))
-            if not 0<length<=MAX_SOURCE:raise UserError('只能上传 64 MB 以内的文件。')
-            raw = self.rfile.read(length)
             # A missing title or author is read from the file itself; an empty one is what the reader chose.
-            return self.json(self.lib.uploads.save(raw,query.get('name',''),query.get('title'),query.get('author')))
+            return self.json(self.lib.uploads.receive(self.rfile,int(self.headers.get('Content-Length','0')),query.get('name',''),query.get('title'),query.get('author')))
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except (UserError,CleanError,OSError,ValueError) as exc:self.json({'error':str(exc)},400)
 

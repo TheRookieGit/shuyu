@@ -1,18 +1,24 @@
 """Novels uploaded from Shuyu Lite, saved into the library as ordinary files so versions stay with the book."""
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import uuid
+import zipfile
 
 from ai_cleaner import MAX_SOURCE, SUPPORTED, CleanError, Document
+from archive_engine import ARCHIVES, ArchiveEngine, ArchiveError
 from book_names import detect
 
 # Inside the library root, so the full page lists uploads like any other book. Automatic cleanup skips this folder.
 UPLOAD_FOLDER = 'Lite上传'
 MARK = '【lite上传】'
-# Cleaned versions of an upload sit beside it; scans skip them, so they never show up as books of their own.
+MAX_ARCHIVE = 512*1024*1024
+# Cleaned versions of an upload sit beside it, and so do uploaded archives whose novels were already saved one by one.
+# Scans skip both, so neither shows up as books of their own.
 VERSION_FILE = re.compile(r'【AI清理版\d+】(?:（\d+）)?\.[^.]+$')
 
 
@@ -27,6 +33,10 @@ def file_stem(title,author,mark=MARK):
 
 def is_version_file(path,root):
     return bool(VERSION_FILE.search(path.name)) and path.parent==Path(root)/UPLOAD_FOLDER
+
+
+def skipped_by_scan(path,root):
+    return path.parent==Path(root)/UPLOAD_FOLDER and (bool(VERSION_FILE.search(path.name)) or path.suffix.lower() in ARCHIVES)
 
 
 def free_path(folder,stem,ext):
@@ -67,24 +77,66 @@ class Uploads:
                 continue
 
     def save(self,raw,name,title=None,author=None):
-        """title/author None: read from the file name or the book itself. Given values are the reader's edits."""
+        return self.receive(io.BytesIO(raw),len(raw),name,title,author)
+
+    def receive(self,stream,length,name,title=None,author=None):
+        """Store one upload: a novel, or an archive whose novels are each saved beside it.
+        title/author None: read from the file name or the book itself. Given values are the reader's edits."""
         ext = Path(str(name)).suffix.lower()
-        if ext not in SUPPORTED:raise CleanError('只能上传 TXT、MD 或 EPUB 小说。')
-        if not raw or len(raw)>MAX_SOURCE:raise CleanError('只能上传 64 MB 以内的文件。')
+        if ext not in SUPPORTED|ARCHIVES:raise CleanError('只能上传 TXT、MD、EPUB 小说或压缩包。')
+        limit = MAX_ARCHIVE if ext in ARCHIVES else MAX_SOURCE
+        if not 0<length<=limit:raise CleanError(f'只能上传 {limit//1024//1024} MB 以内的{"压缩包" if ext in ARCHIVES else "小说"}。')
         root = Path(self.lib.root)
         if not root.is_dir():raise CleanError('Windows 电脑上的书库暂时无法访问，请确认磁盘已连接。')
-        # Check that it opens as a novel before anything is written into the library.
-        temporary = self.lib.data_dir/'uploads'/(uuid.uuid4().hex+ext)
-        temporary.parent.mkdir(parents=True,exist_ok=True)
+        work = self.lib.data_dir/'uploads'/uuid.uuid4().hex;work.mkdir(parents=True)
         try:
-            temporary.write_bytes(raw);text = Document(temporary).text
+            temporary = work/('upload'+ext)
+            with temporary.open('wb') as target:
+                remaining = length
+                while remaining:
+                    chunk = stream.read(min(remaining,1024*1024))
+                    if not chunk:raise CleanError('上传没有完成，请重试。')
+                    target.write(chunk);remaining -= len(chunk)
+            if ext in ARCHIVES:return self._archive(temporary,work,str(name))
+            uid, = self.lib.register(self._novel(temporary,str(name),title,author))
+            return self.lib.book(uid)
         finally:
-            temporary.unlink(missing_ok=True)
-        found_title,found_author = detect(str(name),raw,text)
+            shutil.rmtree(work,ignore_errors=True)
+
+    def _novel(self,path,name,title=None,author=None):
+        # Check that it opens as a novel before anything is written into the library.
+        text = Document(path).text;raw = path.read_bytes();ext = Path(name).suffix.lower()
+        found_title,found_author = detect(name,raw,text)
         title = clean_name(found_title if title is None else title,60)
         author = clean_name(found_author if author is None else author,30)
         if not title:raise CleanError('请填写书名。')
-        folder = root/UPLOAD_FOLDER;folder.mkdir(exist_ok=True)
+        folder = Path(self.lib.root)/UPLOAD_FOLDER;folder.mkdir(exist_ok=True)
         target = free_path(folder,file_stem(title,author),ext)
         with target.open('xb') as stream:stream.write(raw)
-        return self.lib.book(self.lib.register(target))
+        return target
+
+    def _archive(self,path,work,name):
+        """Unpack every novel inside, nested archives included; the archive itself is kept beside them."""
+        # A private engine, so its unpacked copies are removed with this upload and never mix with the library's.
+        engine = ArchiveEngine(work/'engine',self.lib.engine.passwords)
+        engine.tool,engine.setup_error,engine._tool_checked = self.lib.engine.ensure_tool(),self.lib.engine.setup_error,True
+        try:leaves,issues = engine.catalog(path)
+        except (ArchiveError,subprocess.TimeoutExpired,zipfile.BadZipFile) as exc:
+            raise CleanError(str(exc) if isinstance(exc,ArchiveError) else '压缩包无法读取。')
+        novels = [leaf for leaf in leaves if leaf['ext'] in SUPPORTED]
+        if not novels:
+            raise CleanError('压缩包里没有找到 TXT、MD 或 EPUB 小说。'+(issues[0]['message'] if issues else ''))
+        saved,failed = [],[]
+        for leaf in novels:
+            inner = leaf['name'].replace('\\','/').rsplit('/',1)[-1]
+            try:saved.append(self._novel(engine.materialize(path,leaf['chain'],inner),inner))
+            except (CleanError,ArchiveError,subprocess.TimeoutExpired,OSError) as exc:
+                failed.append(f'{inner}：{exc}' if isinstance(exc,(CleanError,ArchiveError)) else f'{inner}：无法取出。')
+        if not saved:raise CleanError('压缩包里的小说都没能导入：'+'；'.join(failed[:3]))
+        folder = Path(self.lib.root)/UPLOAD_FOLDER
+        stem = clean_name(Path(name).stem,80) or '压缩包'
+        archive = free_path(folder,stem+MARK,Path(name).suffix.lower())
+        shutil.copyfile(path,archive)
+        books = [self.lib.book(uid) for uid in self.lib.register(*saved)]
+        return {'archive':archive.name,'books':books,'failed':failed+[f'{i["name"]}：{i["message"]}' for i in issues][:20],
+                'other_files':len(leaves)-len(novels)}

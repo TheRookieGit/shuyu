@@ -41,9 +41,9 @@
             <div id="results" class="results"></div>
           </div>
           <form id="upload-form" hidden>
-            <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub" multiple><span>选择 TXT、MD 或 EPUB 小说，可以一次选多本（每本 64 MB 以内）</span></label>
+            <label class="drop" for="upload-file"><input id="upload-file" type="file" accept=".txt,.md,.epub,.zip,.rar,.7z,.tar,.gz,.bz2,.xz" multiple><span>选择 TXT、MD、EPUB 小说或 ZIP、RAR、7Z 等压缩包，可以一次选多个（小说 64 MB、压缩包 512 MB 以内）</span></label>
             <ul id="upload-list" class="upload-list" hidden></ul>
-            <p class="hint">书名和作者会从文件名和书里自动识别，需要的话可以修改。上传后保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到。</p>
+            <p class="hint">书名和作者会从文件名和书里自动识别，需要的话可以修改。压缩包会在 Windows 电脑上自动解压（包括包中包），把里面的每本小说识别书名作者后单独保存。小说和压缩包都保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到。</p>
             <p id="upload-error" class="notice" hidden></p>
             <button class="button primary" type="submit">上传到 Windows 书库</button>
           </form>

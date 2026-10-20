@@ -133,6 +133,24 @@ class LiteUploadTests(LibraryFixture,unittest.TestCase):
             while time.time()<deadline and self.lib.cleaner.public(jobs[1]['id'])['status']!='ready':time.sleep(.01)
         self.assertEqual([self.lib.cleaner.public(j['id'])['status'] for j in jobs],['ready','ready','paused'])
 
+    def test_archive_novels_are_unpacked_named_and_kept_with_the_archive(self):
+        inner=packed({'《丁》作者：戊.txt':TEXT.encode()})
+        raw=packed({'《故事甲》作者：某人.txt':TEXT.encode('gb18030'),'子目录/新建文本文档.txt':('书名：乙书\n作者：丙\n\n'+TEXT).encode(),
+                    '更深/inner.zip':inner,'封面.jpg':b'image','说明.pdf':b'%PDF-1.4'})
+        result=self.lib.uploads.save(raw,'【合集】小说三本.zip')
+        folder=self.root/UPLOAD_FOLDER
+        self.assertEqual(sorted(b['name'] for b in result['books']),sorted(['《故事甲》作者：某人【lite上传】.txt','《乙书》作者：丙【lite上传】.txt','《丁》作者：戊【lite上传】.txt']))
+        self.assertEqual(result['archive'],'合集小说三本【lite上传】.zip');self.assertEqual((folder/result['archive']).read_bytes(),raw)
+        self.assertEqual(result['other_files'],1,'the PDF is reported, not imported')
+        self.assertEqual((folder/'《故事甲》作者：某人【lite上传】.txt').read_bytes(),TEXT.encode('gb18030'),'novels are copied byte for byte')
+        self.assertEqual(list((self.data/'uploads').iterdir()),[],'unpacked copies are removed')
+        self.scan()
+        self.assertEqual(self.lib.listing({'q':'故事甲'})['total'],1,'the kept archive is not scanned into duplicates')
+        self.assertFalse(any('合集小说三本' in b['rel'] for b in self.lib.listing({'q':'丁','limit':100})['items']))
+        self.assertEqual(self.clean(result['books'][0]['id'])['label'],'AI 清理版 1')
+        with self.assertRaises(CleanError):self.lib.uploads.save(packed({'a.jpg':b'image'}),'图片.zip')
+        self.assertFalse((folder/'图片【lite上传】.zip').exists())
+
     def test_bad_uploads_write_nothing(self):
         for raw,name,title in [(b'x','a.pdf','书'),(b'','a.txt','书'),(TEXT.encode(),'a.txt',' 《》 '),(b'not a zip','a.epub','书')]:
             with self.assertRaises(CleanError):self.lib.uploads.save(raw,name,title)
