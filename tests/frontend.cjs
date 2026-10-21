@@ -88,6 +88,7 @@ async function run(){
   assert.equal(JSON.parse(requests.filter(r=>r.url==='/api/open').at(-1).options.body).version_id,'');
   await waitFor(()=>!$('#weread-status').hidden,'WeRead status in the header');assert.match($('#weread-status').textContent,/未登录/);
   $('#weread-book').click();await waitFor(()=>$('#weread-dialog').open&&$('#weread-qr svg'),'sign-in QR code from the full page');
+  assert.equal($('#weread-qr path').getAttribute('stroke'),'none','QR modules are not outlined like icons');
   await waitFor(()=>/已传到微信读书书架（小林）/.test($('#toast').textContent),'sent from book details',12000);
   assert.equal(JSON.parse(requests.filter(r=>r.url==='/api/weread/upload').at(-1).options.body).version_id,'');
   assert.match($('#weread-status').textContent,/小林/);assert.ok($('#weread-status').classList.contains('signed-in'));

@@ -16,7 +16,8 @@ document.body.insertAdjacentHTML('beforeend',`<dialog id="weread-dialog" class="
   <p class="field-help hint">登录保存在 Windows 电脑上，完整版书屿和书屿 Lite 共用，只用来把书传到你的书架。这是照着微信读书网页版的上传方式做的，不是官方接口；微信读书改版后，可能要等书屿更新才能继续使用。</p>
   <div class="weread-actions"><button id="weread-switch" class="button secondary" type="button" hidden>换一个账号</button><button id="weread-logout" class="button secondary" type="button" hidden>退出微信读书</button><button id="weread-close" class="text-button" type="button">关闭</button></div>
 </dialog>`);
-const qrSVG=rows=>`<svg viewBox="-4 -4 ${rows.length+8} ${rows.length+8}" role="img" aria-label="微信读书登录二维码" shape-rendering="crispEdges"><rect x="-4" y="-4" width="100%" height="100%" fill="#fff"/><path fill="#000" d="${rows.map((row,y)=>[...row].map((c,x)=>c==='1'?`M${x} ${y}h1v1h-1z`:'').join('')).join('')}"/></svg>`;
+// stroke="none": the full page draws its icons with a stroke on every svg, which would blur the modules together.
+const qrSVG=rows=>`<svg viewBox="-4 -4 ${rows.length+8} ${rows.length+8}" role="img" aria-label="微信读书登录二维码" shape-rendering="crispEdges"><rect x="-4" y="-4" width="100%" height="100%" fill="#fff" stroke="none"/><path fill="#000" stroke="none" d="${rows.map((row,y)=>[...row].map((c,x)=>c==='1'?`M${x} ${y}h1v1h-1z`:'').join('')).join('')}"/></svg>`;
 function renderWeRead(status){
   weread.status=status;const login=status.login||{},chip=$('#weread-status');
   // The header shows which account is signed in, so it is clear where books will go.
