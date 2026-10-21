@@ -205,12 +205,12 @@ class WeRead:
                 # session/init sets these cookies; the tokens themselves stand in if it did not.
                 for name,value in [('wr_vid',data['vid']),('wr_skey',data['accessToken']),('wr_rt',data['refreshToken'])]:
                     self.cookies.setdefault(name,str(value))
-                self._save()
-            self.login_state = {'state':'idle'}
             # Only shown to tell accounts apart, so signing in still counts when this fails.
-            try:self.name = str(self._call('/web/user?'+urllib.parse.urlencode({'userVid':self.cookies['wr_vid']})).get('name',''))[:40]
+            try:self.name = str(self._call('/web/user?'+urllib.parse.urlencode({'userVid':self.cookies['wr_vid']}),renew=False).get('name',''))[:40]
             except WeReadError:pass
-            self._save()
+            with self.lock:self._save()
+            # Signed in only once everything is saved, so the pages never show an account without its name.
+            self.login_state = {'state':'idle'}
         except WeReadError as exc:
             if attempt==self.attempt:self.login_state = {'state':'failed','error':str(exc)}
 
