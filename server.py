@@ -470,7 +470,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
-    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','ai.js','classification.js','wishlist.js','tree.js','weread.js','style.css','favicon.svg')},
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','ai.js','classification.js','wishlist.js','tree.js','weread.js','style.css','favicon.svg','apple-touch-icon.png')},
               # Shuyu Lite: a separate page for AI processing only, on the same backend.
               '/lite/':'lite/index.html','/lite/lite.js':'lite/lite.js','/lite/lite.css':'lite/lite.css'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
