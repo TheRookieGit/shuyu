@@ -7,7 +7,7 @@ const root=path.resolve(__dirname,'..');
 const child=spawn('python',['-u',path.join(__dirname,'fixture_server.py')],{cwd:root,stdio:['pipe','pipe','pipe'],windowsHide:true});
 let dom;
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function waitFor(fn,label){const deadline=Date.now()+6000;while(Date.now()<deadline){if(fn())return;await delay(20);}throw new Error('Timed out: '+label);}
+async function waitFor(fn,label,ms=6000){const deadline=Date.now()+ms;while(Date.now()<deadline){if(fn())return;await delay(20);}throw new Error('Timed out: '+label);}
 async function run(){
   const base=await new Promise((resolve,reject)=>{let output='';child.stdout.on('data',chunk=>{output+=chunk;const m=output.match(/READY (http:\/\/[^\s]+)/);if(m)resolve(m[1]);});child.on('error',reject);child.on('exit',code=>reject(new Error('Fixture server exited: '+code)));setTimeout(()=>reject(new Error('Fixture startup timed out')),8000).unref();});
   const errors=[],requests=[];
@@ -25,7 +25,7 @@ async function run(){
   w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close=function(){if(!this.open)return;this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   // One evaluation shares the lexical environment, as two classic scripts do in a browser.
-  w.eval(['app.js','ai.js','classification.js','wishlist.js','tree.js'].map(file=>readFileSync(path.join(root,'web',file),'utf8')).join('\n'));
+  w.eval(['app.js','ai.js','classification.js','wishlist.js','tree.js','weread.js'].map(file=>readFileSync(path.join(root,'web',file),'utf8')).join('\n'));
   await waitFor(()=>d.querySelectorAll('.book-card:not(.skeleton)').length===8,'flat library');
   await waitFor(()=>$('#stat-total').textContent.includes('8'),'statistics');
   for(const selector of ['#sidebar','#reader','#continue-banner','.favorite-button','#main-nav','#import-file'])assert.equal($(selector),null,selector+' removed');
@@ -86,6 +86,15 @@ async function run(){
   assert.match($('#version-info').textContent,/源文件/);
   $('#system-open').click();await waitFor(()=>requests.filter(r=>r.url==='/api/open').length===2,'open original version');
   assert.equal(JSON.parse(requests.filter(r=>r.url==='/api/open').at(-1).options.body).version_id,'');
+  await waitFor(()=>!$('#weread-status').hidden,'WeRead status in the header');assert.match($('#weread-status').textContent,/未登录/);
+  $('#weread-book').click();await waitFor(()=>$('#weread-dialog').open&&$('#weread-qr svg'),'sign-in QR code from the full page');
+  await waitFor(()=>/已传到微信读书书架（小林）/.test($('#toast').textContent),'sent from book details',12000);
+  assert.equal(JSON.parse(requests.filter(r=>r.url==='/api/weread/upload').at(-1).options.body).version_id,'');
+  assert.match($('#weread-status').textContent,/小林/);assert.ok($('#weread-status').classList.contains('signed-in'));
+  $('#weread-status').click();await waitFor(()=>$('#weread-dialog').open&&!$('#weread-logout').hidden,'account dialog');assert.match($('#weread-account').textContent,/小林/);
+  $('#weread-logout').click();await waitFor(()=>/未登录/.test($('#weread-status').textContent),'signed out');
+  assert.ok(!$('#weread-retry').hidden,'scan to sign in again');$('#weread-close').click();
+  console.log('PASS WeRead account in the header, upload from book details after scanning, sign out');
   $('[data-close="detail-dialog"]').click();$('#reset-filters').click();
   await waitFor(()=>d.querySelectorAll('.book-card').length===8,'versions do not increase book count');
   $('#settings-button').click();$('#ai-settings-button').click();await waitFor(()=>$('#ai-settings-dialog').open,'Claude settings');

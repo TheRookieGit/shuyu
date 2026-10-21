@@ -595,3 +595,16 @@ main{padding:27px 18px 0}
   .tree-bar{left:calc(6px + min(var(--depth),6)*12px)}
   .tree-more{padding-left:calc(40px + min(var(--depth),6)*12px)}
 }
+/* WeRead (微信读书): account status in the header and its sign-in dialog. */
+.weread-status{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid #dfe5d9;border-radius:999px;background:#fcfdf9;color:#8b968a;font-size:11px;white-space:nowrap;cursor:pointer}
+.weread-status.signed-in{border-color:#bccdb9;background:#eaf0e6;color:#365e4e}
+.weread-dot{width:8px;height:8px;border-radius:50%;background:#c4c9bf;flex-shrink:0}
+.weread-status.signed-in .weread-dot{background:#3f9a5c}
+#weread-status-text{max-width:9em;overflow:hidden;text-overflow:ellipsis}
+.weread-dialog{width:460px}
+.weread-dialog h2{font-family:var(--serif);font-size:24px;font-weight:500;margin:0 0 12px}
+.weread-dialog>p{font-size:12px}
+.weread-qr{width:216px;max-width:100%;margin:8px auto}
+.weread-qr svg{display:block;width:100%;height:auto}
+.weread-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px 14px;margin:14px 0}
+@media(max-width:600px){.weread-status .weread-label{display:none}.weread-status{padding:6px 9px}#weread-status-text{max-width:5em}}

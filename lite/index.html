@@ -9,11 +9,12 @@
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="lite.css?v=dev">
   <script defer src="lite.js?v=dev"></script>
+  <script defer src="../weread.js?v=dev"></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="./"><img src="../favicon.svg" alt=""><span>书屿 Lite<small>小说 AI 处理</small></span></a>
-    <nav class="top-links"><button id="ai-open" class="link-button" type="button" hidden>Claude 设置</button><a href="../">完整版书屿</a><button id="logout" class="link-button" type="button" hidden>退出登录</button></nav>
+    <nav class="top-links"><button id="weread-status" class="weread-status" type="button" hidden><span class="weread-dot" aria-hidden="true"></span>微信读书 · <span id="weread-status-text"></span></button><button id="ai-open" class="link-button" type="button" hidden>Claude 设置</button><a href="../">完整版书屿</a><button id="logout" class="link-button" type="button" hidden>退出登录</button></nav>
   </header>
 
   <main>
@@ -54,7 +55,8 @@
         <div id="chosen" hidden>
           <div class="chosen-book"><div><strong id="chosen-title"></strong><span id="chosen-meta"></span></div><button id="change-book" class="link-button" type="button">换一本</button></div>
           <label class="label" for="version">处理哪个版本</label><select id="version"></select>
-          <details id="versions" class="versions"><summary>全部版本与下载 <span id="version-count"></span></summary><ul id="version-list"></ul></details>
+          <div class="direct"><span class="hint">不用处理，直接用这个版本：</span><div class="row"><button id="direct-weread" class="button" type="button">上传到微信读书</button><button id="direct-download" class="button" type="button">下载</button><button id="direct-share" class="button" type="button" hidden>分享到其他应用</button></div></div>
+          <details id="versions" class="versions"><summary>全部版本、下载与上传 <span id="version-count"></span></summary><ul id="version-list"></ul></details>
         </div>
       </section>
 
@@ -111,8 +113,9 @@
       <section id="done" class="card" hidden>
         <h2>已另存为新版本</h2>
         <p id="done-message"></p>
-        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="back-to-batch" class="button" type="button" hidden>返回本批</button><button id="continue" class="button" type="button">在这个版本上继续处理</button><button id="again" class="link-button" type="button">换一本书</button></div>
-        <p class="hint">原文件和之前的每个版本都保留着，可以在「全部版本与下载」里随时下载，也可以在完整版书屿的书目详情里找到。</p>
+        <div class="row"><button id="download" class="button primary" type="button">下载到这台设备</button><button id="weread" class="button primary" type="button">上传到微信读书</button><button id="share" class="button" type="button" hidden>分享到其他应用</button><button id="back-to-batch" class="button" type="button" hidden>返回本批</button><button id="continue" class="button" type="button">在这个版本上继续处理</button><button id="again" class="link-button" type="button">换一本书</button></div>
+        <p class="hint">「上传到微信读书」由 Windows 电脑直接传到你的微信读书书架，第一次需要用微信扫码登录。在手机上也可以点「分享到其他应用」，选微信读书 App 导入。</p>
+        <p class="hint">原文件和之前的每个版本都保留着，可以在「全部版本与下载」里随时下载或上传，也可以在完整版书屿的书目详情里找到。</p>
       </section>
     </div>
   </main>

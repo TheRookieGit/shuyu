@@ -32,6 +32,7 @@ from auto_clean import AutoCleaner
 from catalog_tree import CatalogTree
 from lite_upload import Uploads, skipped_by_scan
 from book_names import metadata
+from weread import WeRead, WeReadError
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -103,6 +104,7 @@ class Library:
         self.auto = AutoCleaner(self)
         self.tree = CatalogTree(self)
         self.uploads = Uploads(self)
+        self.weread = WeRead(self)
         self.uploads.move_versions()
 
     @contextmanager
@@ -466,7 +468,7 @@ class Library:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'Shuyu/2.0'
-    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','ai.js','classification.js','wishlist.js','tree.js','style.css','favicon.svg')},
+    STATIC = {'/':'web/index.html',**{f'/{name}':f'web/{name}' for name in ('app.js','ai.js','classification.js','wishlist.js','tree.js','weread.js','style.css','favicon.svg')},
               # Shuyu Lite: a separate page for AI processing only, on the same backend.
               '/lite/':'lite/index.html','/lite/lite.js':'lite/lite.js','/lite/lite.css':'lite/lite.css'}
     PUBLIC_API = {'/api/session','/api/login','/api/download'}
@@ -599,6 +601,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/auto-clean':return self.json(self.lib.auto.status())
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1),query.get('category','')))
+            if url.path=='/api/weread':return self.json(self.lib.weread.status())
+            if url.path=='/api/weread/upload':return self.json(self.lib.weread.task(query.get('task','')))
             if url.path=='/api/download':
                 try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
                 except PermissionError as exc:return self.json({'error':str(exc)},403)
@@ -613,6 +617,7 @@ class Handler(BaseHTTPRequestHandler):
                     {'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'none'; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+        except WeReadError as exc:self.json({'error':str(exc),'weread_login':exc.login},400)
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc)},400)
 
     def do_POST(self):
@@ -672,6 +677,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/clean/start':return self.json(self.lib.cleaner.start(data['job_id'],bool(data.get('queue'))))
             if self.path=='/api/clean/cancel':return self.json(self.lib.cleaner.cancel(data['job_id']))
             if self.path=='/api/clean/save':return self.json(self.lib.cleaner.save(data))
+            # WeRead (微信读书): sign in with WeChat once, then send finished versions to its shelf.
+            if self.path=='/api/weread/login':return self.json(self.lib.weread.login(str(data.get('otp',''))))
+            if self.path=='/api/weread/logout':
+                self.lib.weread.forget();return self.json(self.lib.weread.status())
+            if self.path=='/api/weread/upload':return self.json(self.lib.weread.upload(data['id'],str(data.get('version_id',''))))
             if self.path=='/api/scan':return self.json({'started':self.lib.start_scan(force=True)})
             if self.path=='/api/settings':
                 self.lib.settings(data)
@@ -682,6 +692,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({'ok':True})
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
+        except WeReadError as exc:self.json({'error':str(exc),'weread_login':exc.login},400)
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc)},400)
 
 

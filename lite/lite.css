@@ -26,7 +26,7 @@ h1,h2{font-family:var(--serif);margin:0 0 14px;font-size:18px}
 .button{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 16px;border:1px solid var(--line);border-radius:6px;background:var(--paper);cursor:pointer}
 .button.primary{border-color:var(--green);background:var(--green);color:#fff}
 .button:disabled{opacity:.5;cursor:default}
-.link-button{padding:0;border:0;background:none;color:var(--green);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.link-button,.text-button{padding:0;border:0;background:none;color:var(--green);font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .resume{display:block;width:100%;padding:12px 16px;border:1px dashed #b9c8b5;border-radius:10px;background:var(--green-soft);color:var(--green);text-align:left;cursor:pointer}
 .results{display:grid;gap:6px;max-height:380px;overflow:auto}
 .result{display:flex;justify-content:space-between;gap:12px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);text-align:left;cursor:pointer}
@@ -64,13 +64,24 @@ progress{width:100%;height:8px;accent-color:var(--green)}
 .drop{display:block;padding:22px 16px;border:1px dashed #b9c8b5;border-radius:10px;background:#fbfcf9;text-align:center;color:var(--green);cursor:pointer;overflow-wrap:anywhere}
 .drop input{position:absolute;width:1px;height:1px;opacity:0}
 .drop:focus-within{outline:2px solid #96ae99}
+.direct{margin-top:14px}
+.direct .row{margin:4px 0 0}
 .versions{margin-top:14px;font-size:13px}
+.weread-status{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap}
+.weread-status.signed-in{border-color:#b9c8b5;background:var(--green-soft);color:var(--green)}
+.weread-dot{width:8px;height:8px;border-radius:50%;background:#c4c9bf}
+.weread-status.signed-in .weread-dot{background:#3f9a5c}
+.weread-qr{width:216px;max-width:100%;margin:8px auto}
+.weread-qr svg{display:block;width:100%;height:auto}
+.weread-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:14px 0}
+
 .versions summary{cursor:pointer;color:var(--green)}
 .versions ul{margin:8px 0 0;padding:0;list-style:none}
 .versions li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--line)}
 .versions li span{display:block;color:var(--muted);font-size:12px}
-.offline{width:min(460px,calc(100% - 32px));padding:24px;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
-.offline::backdrop{background:#24392f66}
+.version-actions{display:flex;flex-shrink:0;gap:8px}
+.offline,.weread-dialog{width:min(460px,calc(100% - 32px));padding:24px;border:1px solid var(--line);border-radius:12px;color:var(--ink)}
+.offline::backdrop,.weread-dialog::backdrop{background:#24392f66}
 .offline ul{padding-left:20px;font-size:13px}
 .upload-list,.batch-list{margin:12px 0;padding:0;list-style:none}
 .upload-list li,.batch-list li{padding:12px 0;border-top:1px solid var(--line)}
@@ -85,6 +96,7 @@ progress{width:100%;height:8px;accent-color:var(--green)}
 .toast.error{background:#8a4b3c}
 @media(max-width:600px){
   .topbar{padding:10px 16px}
+  .top-links{flex-wrap:wrap;justify-content:flex-end;gap:6px 12px}
   .card{padding:16px}
   .patch-compare{grid-template-columns:1fr}
   .button{flex:1 1 auto}

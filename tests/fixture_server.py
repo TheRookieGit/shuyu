@@ -8,6 +8,7 @@ from tests.test_library import LibraryTests
 from server import Handler, ThreadingHTTPServer
 from ai_cleaner import ClaudeClient
 from claude_terminal import ClaudeTerminal
+from tests.test_weread import FakeWeRead
 
 case=LibraryTests()
 case.setUp()
@@ -30,7 +31,9 @@ providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
     patch.object(ClaudeTerminal,'status',return_value={'installed':True,'path':'synthetic-claude.exe',
         'logged_in':True,'auth_method':'claude.ai','subscription_type':'pro','ready':True,'message':'已登录 Claude Pro 订阅。'}),
     patch('claude_terminal.find_command',return_value=['synthetic-claude.exe']),
-    patch.dict('os.environ',{'ANTHROPIC_API_KEY':''})]
+    patch.dict('os.environ',{'ANTHROPIC_API_KEY':''}),
+    # WeRead sign-in and upload answered locally; nothing reaches weread.qq.com.
+    patch('weread.fetch',side_effect=FakeWeRead()),patch('weread.POLL',.01)]
 for provider in providers:provider.start()
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 server.library=case.lib

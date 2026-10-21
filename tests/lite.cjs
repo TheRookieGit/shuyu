@@ -7,7 +7,7 @@ const root=path.resolve(__dirname,'..');
 const child=spawn('python',['-u',path.join(__dirname,'fixture_server.py')],{cwd:root,stdio:['pipe','pipe','pipe'],windowsHide:true});
 let dom;
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function waitFor(fn,label){const deadline=Date.now()+6000;while(Date.now()<deadline){if(fn())return;await delay(20);}throw new Error('Timed out: '+label);}
+async function waitFor(fn,label,ms=6000){const deadline=Date.now()+ms;while(Date.now()<deadline){if(fn())return;await delay(20);}throw new Error('Timed out: '+label);}
 async function run(){
   const base=await new Promise((resolve,reject)=>{let output='';child.stdout.on('data',chunk=>{output+=chunk;const m=output.match(/READY (http:\/\/[^\s]+)/);if(m)resolve(m[1]);});child.on('error',reject);child.on('exit',code=>reject(new Error('Fixture server exited: '+code)));setTimeout(()=>reject(new Error('Fixture startup timed out')),8000).unref();});
   const errors=[],requests=[];
@@ -23,10 +23,13 @@ async function run(){
     return fetch(new URL(url,base),options);
   };
   w.console.error=(...args)=>errors.push(args.map(String).join(' '));
+  // A system share sheet, as phones have; jsdom has none.
+  const shared=[];Object.defineProperty(w.navigator,'canShare',{value:()=>true});Object.defineProperty(w.navigator,'share',{value:async({files})=>{shared.push(files[0]);}});
   w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
   w.HTMLDialogElement.prototype.close=function(){if(!this.open)return;this.removeAttribute('open');this.dispatchEvent(new w.Event('close'));};
   const posted=route=>requests.filter(r=>r.url===route).map(r=>JSON.parse(r.options.body));
-  w.eval(readFileSync(path.join(root,'lite/lite.js'),'utf8'));
+  // One evaluation shares the lexical environment, as Lite's two classic scripts do in a browser.
+  w.eval(['lite/lite.js','web/weread.js'].map(file=>readFileSync(path.join(root,file),'utf8')).join('\n'));
   await waitFor(()=>!$('#app').hidden&&$$('.result').length>0,'signed in locally with recent books');
   assert.ok($('#login').hidden);assert.ok($('#logout').hidden,'no logout on the Windows machine itself');
   assert.ok(requests.some(r=>r.url.startsWith('/api/books?')&&r.url.includes('kind=text%2Cepub')),'only text and EPUB books');
@@ -65,9 +68,25 @@ async function run(){
   const book=await (await fetch(new URL('/api/book?id='+posted('/api/clean/prepare')[0].id,base))).json();
   assert.equal(book.versions[0].label,'去作者话 · 统一人名');
   console.log('PASS review, preselection and save as a new version');
+  assert.ok(!$('#share').hidden,'share offered where a share sheet exists');
+  $('#share').click();await waitFor(()=>shared.length===1,'file handed to the share sheet');
+  assert.match(shared[0].name,/\.txt$/);assert.match(Buffer.from(await shared[0].arrayBuffer()).toString(),/小林走进/);
+  $('#weread').click();await waitFor(()=>$('#weread-dialog').open&&$('#weread-qr svg'),'WeRead sign-in QR code');
+  assert.match($('#weread-login-status').textContent,/扫一扫/);assert.ok(!$('#weread-link-row').hidden);
+  await waitFor(()=>!$('#weread-dialog').open&&/已传到微信读书书架/.test($('#toast').textContent),'signed in, then sent to the shelf',12000);
+  assert.deepEqual(posted('/api/weread/upload'),[{id:book.id,version_id:book.versions[0].id},{id:book.id,version_id:book.versions[0].id}],'tried, signed in, sent');
+  assert.equal($('#weread').textContent,'上传到微信读书');assert.ok(!$('#weread').disabled);
+  assert.match($('#weread-status').textContent,/微信读书 · 小林/);assert.ok($('#weread-status').classList.contains('signed-in'),'header shows the signed-in account');
+  $('#weread-status').click();await waitFor(()=>$('#weread-dialog').open&&/已登录微信读书：小林/.test($('#weread-account').textContent),'WeRead account shown');
+  assert.ok($('#weread-login').hidden);assert.ok(!$('#weread-logout').hidden);$('#weread-close').click();
+  console.log('PASS share to another app, and upload to WeRead after scanning to sign in');
   $('#again').click();await waitFor(()=>!$('#pick').hidden&&$('#setup').hidden&&!$('#search-area').hidden,'start over');
   await waitFor(()=>$$('.result').length>1,'recent books again');
   $$('.result').find(el=>el.textContent.includes('春日')).click();await waitFor(()=>!$('#setup').hidden&&$('#version').options.length===2,'new version offered');
+  $('#direct-weread').click();await waitFor(()=>posted('/api/weread/upload').length===3,'sent straight from step 1, without processing');
+  assert.equal(posted('/api/weread/upload')[2].version_id,$('#version').value);
+  await waitFor(()=>!$('#direct-weread').disabled&&$('#direct-weread').textContent==='上传到微信读书','step-1 upload finished',8000);
+  assert.ok(!$('#direct-download').hidden);assert.ok(!$('#direct-share').hidden);
   assert.equal($('#version').value,book.versions[0].id,'latest version preselected');
   $('#custom-toggle').click();submit();await waitFor(()=>!$('#review').hidden,'clean-only plan');
   assert.equal(posted('/api/clean/prepare')[1].mode,'focused');assert.deepEqual(posted('/api/clean/prepare')[1].categories,['author_note','garbled','censored']);
@@ -97,8 +116,10 @@ async function run(){
   $('#save').click();await waitFor(()=>!$('#done').hidden,'upload saved');
   $('#continue').click();await waitFor(()=>!$('#setup').hidden&&$$('#version-list li').length===2,'continue on the new version');
   assert.equal($('#version').value,$('[data-download]').dataset.download,'newest version chosen');
-  $$('[data-download]').at(-1).click();await waitFor(()=>requests.some(r=>r.url==='/api/download/ticket'),'download original');
-  assert.equal(JSON.parse(requests.find(r=>r.url==='/api/download/ticket').options.body).version_id,'');
+  assert.deepEqual($$('[data-weread]').map(el=>el.dataset.weread),$$('[data-download]').map(el=>el.dataset.download),'every version can go to WeRead');
+  const tickets=requests.filter(r=>r.url==='/api/download/ticket').length;
+  $$('[data-download]').at(-1).click();await waitFor(()=>requests.filter(r=>r.url==='/api/download/ticket').length===tickets+1,'download original');
+  assert.equal(JSON.parse(requests.findLast(r=>r.url==='/api/download/ticket').options.body).version_id,'');
   console.log('PASS upload into the Windows library, named by title and author, versions kept and downloadable');
   $('#again').click();await waitFor(()=>!$('#search-area').hidden,'back to picking');
   $('[data-source="upload"]').click();

@@ -35,7 +35,7 @@ async function api(path,data,file){
   await authReady;const response=file?await reach(path,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file}):await request(path,data);
   if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}
   let result;try{result=await response.json();}catch{showOffline();throw new OfflineError();}
-  if(!response.ok)throw new Error(result.error||'操作未完成');return result;
+  if(!response.ok)throw Object.assign(new Error(result.error||'操作未完成'),{wereadLogin:!!result.weread_login});return result;
 }
 let started=false;
 function showOffline(){const dialog=$('#offline');$('#offline-server').hidden=!hostedPage;$('#offline-detail').textContent=hostedPage?'当前连接的地址：'+serverBase():'';if(!dialog.open)dialog.showModal();}
@@ -162,7 +162,7 @@ async function chooseBook(id,versionId){
     $('#encoding').disabled=['.epub','.eqpub'].includes(book.ext);
     $('#version-count').textContent=`· ${versions.length+1} 个`;
     $('#version-list').innerHTML=[...versions.map(v=>({id:v.id,label:v.label,meta:`${formatDate(v.created)} · 采用 ${v.edit_count} 项修改 · ${sizeText(v.size)}`})),{id:'',label:'原始版本',meta:book.rel.startsWith('Lite上传/')?'Lite 上传的原文件':'书库里的原文件'}]
-      .map(v=>`<li><div><strong>${escapeHTML(v.label)}</strong><span>${escapeHTML(v.meta)}</span></div><button class="button" type="button" data-download="${v.id}">下载</button></li>`).join('');
+      .map(v=>`<li><div><strong>${escapeHTML(v.label)}</strong><span>${escapeHTML(v.meta)}</span></div><div class="version-actions"><button class="button" type="button" data-weread="${v.id}">传到微信读书</button><button class="button" type="button" data-download="${v.id}">下载</button></div></li>`).join('');
     $('#search-area').hidden=true;$('#chosen').hidden=false;showStep('setup');
   }catch(error){onError(error);}
 }
@@ -297,7 +297,7 @@ $('#discard').onclick=async()=>{
 $('#save').onclick=async()=>{
   const button=$('#save');button.disabled=true;
   try{const version=await api('/api/clean/save',{job_id:lite.job.id,selected:[...lite.selected],label:$('#label').value});
-    lite.version=version;store.set(TASK_KEY,'');clearTimeout(lite.timer);
+    lite.version=version;store.set(TASK_KEY,'');clearTimeout(lite.timer);$('#share').textContent='分享到其他应用';
     const entry=lite.batch?.find(entry=>entry.id===lite.job.id);if(entry){entry.saved=version.label;store.set(BATCH_KEY,JSON.stringify(lite.batch));}
     $('#back-to-batch').hidden=!entry;
     $('#done-message').textContent=`《${lite.job.title}》已另存为「${version.label}」，采用了 ${version.edit_count} 项修改。原文件和已有版本都保留着。`;showStep('done');}
@@ -307,7 +307,39 @@ async function download(bookId,versionId){
   try{const result=await api('/api/download/ticket',{id:bookId,version_id:versionId});toast('正在下载…');location.href=serverBase()+result.url;}catch(error){onError(error);}
 }
 $('#download').onclick=()=>download(lite.version.book_id,lite.version.id);
-$('#version-list').onclick=event=>{const button=event.target.closest('[data-download]');if(button)download(lite.book.id,button.dataset.download);};
+$('#weread').onclick=()=>sendToWeRead(lite.version.book_id,lite.version.id,$('#weread'));
+$('#share').onclick=()=>shareFile(lite.version.book_id,lite.version.id,$('#share'));
+// Step 1 also offers the chosen version as it is, without processing.
+$('#direct-download').onclick=()=>download(lite.book.id,$('#version').value);
+$('#direct-weread').onclick=()=>sendToWeRead(lite.book.id,$('#version').value,$('#direct-weread'));
+$('#direct-share').onclick=()=>shareFile(lite.book.id,$('#version').value,$('#direct-share'));
+$('#version-list').onclick=event=>{
+  const button=event.target.closest('[data-download]'),send=event.target.closest('[data-weread]');
+  if(button)download(lite.book.id,button.dataset.download);if(send)sendToWeRead(lite.book.id,send.dataset.weread,send);
+};
+
+// Phones: hand the file to another app, such as the WeRead app, through the system share sheet.
+const prepared={};
+async function shareFile(bookId,versionId,button){
+  const key=bookId+'/'+versionId,label='分享到其他应用';
+  try{
+    let file=prepared[key];
+    if(!file){
+      button.disabled=true;button.textContent='正在准备文件…';
+      const {url}=await api('/api/download/ticket',{id:bookId,version_id:versionId});
+      const response=await reach(url);if(!response.ok)throw new Error('文件没能取回，请重试。');
+      const name=decodeURIComponent((response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/)||[])[1]||'小说.txt');
+      file=prepared[key]=new File([await response.arrayBuffer()],name,{type:/\.epub$/i.test(name)?'application/epub+zip':'text/plain'});
+    }
+    if(!navigator.canShare({files:[file]}))throw new Error('这台设备不能分享这种文件，请先下载到这台设备。');
+    await navigator.share({files:[file]});button.textContent=label;
+  }catch(error){
+    // Waiting for the file can use up the tap that allows sharing; the next tap shares at once.
+    if(error.name==='NotAllowedError'&&prepared[key])button.textContent='文件已准备好，再点一次分享';
+    else{button.textContent=label;if(error.name!=='AbortError')onError(error);}
+  }finally{button.disabled=false;}
+}
+
 $('#continue').onclick=()=>{lite.job=null;lite.batchBooks=null;chooseBook(lite.version.book_id,lite.version.id);};
 $('#back-to-batch').onclick=$('#review-back').onclick=()=>{clearTimeout(lite.timer);lite.generation++;lite.job=null;openBatch(lite.batch);};
 $('#again').onclick=()=>{lite.book=null;lite.job=null;lite.version=null;$('#chosen').hidden=true;$('#search-area').hidden=false;$('#search').value='';showStep();search();};
@@ -384,4 +416,5 @@ async function offerResume(){
   catch{return showOffline();}
   if(!session.authenticated){store.set('shuyu-token','');return showLogin();}
   started=true;signedIn();$('#app').hidden=false;$('#ai-open').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
+  $('#share').hidden=$('#direct-share').hidden=typeof navigator.canShare!=='function';
 })();

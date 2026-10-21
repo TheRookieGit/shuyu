@@ -2,7 +2,7 @@
   "name": "aiqi-shuyu",
   "private": true,
   "scripts": {
-    "test": "python -m unittest discover -s tests -t . -v && node --check web/app.js && node --check web/ai.js && node --check web/classification.js && node --check lite/lite.js && node tests/frontend.cjs && node tests/lite.cjs"
+    "test": "python -m unittest discover -s tests -t . -v && node --check web/app.js && node --check web/ai.js && node --check web/classification.js && node --check web/weread.js && node --check lite/lite.js && node tests/frontend.cjs && node tests/lite.cjs"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"
