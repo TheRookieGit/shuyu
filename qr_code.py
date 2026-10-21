@@ -1,8 +1,10 @@
-"""A small QR encoder for short links (byte mode, error correction M, versions 1-6), so the backend needs no packages."""
+"""A small QR encoder for login links (byte mode, error correction M, versions 1-10), so the backend needs no packages."""
 from __future__ import annotations
 
-# Version: (error-correction codewords per block, blocks, data codewords per block, alignment pattern centre).
-VERSIONS = {1:(10,1,16,None),2:(16,1,28,18),3:(26,1,44,22),4:(18,2,32,26),5:(24,2,43,30),6:(16,4,27,34)}
+# Version: (error-correction codewords per block, [(blocks, data codewords per block), ...], alignment pattern centres).
+VERSIONS = {1:(10,[(1,16)],[]),2:(16,[(1,28)],[6,18]),3:(26,[(1,44)],[6,22]),4:(18,[(2,32)],[6,26]),5:(24,[(2,43)],[6,30]),
+            6:(16,[(4,27)],[6,34]),7:(18,[(4,31)],[6,22,38]),8:(22,[(2,38),(2,39)],[6,24,42]),9:(22,[(3,36),(2,37)],[6,26,46]),
+            10:(26,[(4,43),(1,44)],[6,28,50])}
 MASKS = [lambda x,y:(x+y)%2==0,lambda x,y:y%2==0,lambda x,y:x%3==0,lambda x,y:(x+y)%3==0,
          lambda x,y:(x//3+y//2)%2==0,lambda x,y:x*y%2+x*y%3==0,lambda x,y:(x*y%2+x*y%3)%2==0,lambda x,y:((x+y)%2+x*y%3)%2==0]
 EXP,LOG = [0]*512,[0]*256
@@ -29,24 +31,39 @@ def error_correction(data,count):
     return remainder[len(data):]
 
 
+def capacity(version):
+    return sum(blocks*size for blocks,size in VERSIONS[version][1])
+
+
+def count_bits(version):
+    return 8 if version<10 else 16
+
+
 def codewords(raw,version):
-    ec,blocks,size,_ = VERSIONS[version]
-    bits = '0100'+f'{len(raw):08b}'+''.join(f'{b:08b}' for b in raw)
-    capacity = blocks*size*8
-    bits += '0'*min(4,capacity-len(bits))
+    ec,groups,_ = VERSIONS[version]
+    bits = '0100'+format(len(raw),f'0{count_bits(version)}b')+''.join(f'{b:08b}' for b in raw)
+    total = capacity(version)
+    bits += '0'*min(4,total*8-len(bits))
     bits += '0'*(-len(bits)%8)
     data = [int(bits[i:i+8],2) for i in range(0,len(bits),8)]
-    data += [(0xec,0x11)[i%2] for i in range(blocks*size-len(data))]
-    parts = [data[i*size:(i+1)*size] for i in range(blocks)]
+    data += [(0xec,0x11)[i%2] for i in range(total-len(data))]
+    parts,start = [],0
+    for blocks,size in groups:
+        for _ in range(blocks):parts.append(data[start:start+size]);start += size
     checks = [error_correction(part,ec) for part in parts]
-    return [part[i] for i in range(size) for part in parts]+[check[i] for i in range(ec) for check in checks]
+    longest = max(len(part) for part in parts)
+    # Blocks are interleaved codeword by codeword; the longer blocks of the second group end last.
+    return [part[i] for i in range(longest) for part in parts if i<len(part)]+[check[i] for i in range(ec) for check in checks]
+
+
+def bch(data,generator,degree):
+    remainder = data
+    for _ in range(degree):remainder = remainder<<1^(remainder>>(degree-1))*generator
+    return data<<degree|remainder
 
 
 def format_bits(mask):
-    data = mask  # Error correction M is 00.
-    remainder = data
-    for _ in range(10):remainder = remainder<<1^(remainder>>9)*0x537
-    return (data<<10|remainder)^0x5412
+    return bch(mask,0x537,10)^0x5412  # Error correction M is 00.
 
 
 def penalty(grid):
@@ -69,7 +86,7 @@ def penalty(grid):
 def matrix(text):
     """Rows of booleans (True is dark) for the text, quiet zone not included."""
     raw = text.encode()
-    version = next((v for v,(_,blocks,size,_) in VERSIONS.items() if len(raw)+2<=blocks*size),None)
+    version = next((v for v in VERSIONS if len(raw)*8+4+count_bits(v)<=capacity(v)*8),None)
     if version is None:raise ValueError('二维码内容太长。')
     size = 17+4*version
     grid = [[False]*size for _ in range(size)]
@@ -79,14 +96,22 @@ def matrix(text):
         for dy in range(-4,5):
             for dx in range(-4,5):
                 if 0<=cx+dx<size and 0<=cy+dy<size:put(cx+dx,cy+dy,max(abs(dx),abs(dy)) not in (2,4))
-    centre = VERSIONS[version][3]
-    if centre:
-        for dy in range(-2,3):
-            for dx in range(-2,3):put(centre+dx,centre+dy,max(abs(dx),abs(dy))!=1)
+    centres = VERSIONS[version][2]
+    for cy in centres:
+        for cx in centres:
+            # None where a finder pattern already sits.
+            if (cx,cy) in [(6,6),(6,centres[-1]),(centres[-1],6)]:continue
+            for dy in range(-2,3):
+                for dx in range(-2,3):put(cx+dx,cy+dy,max(abs(dx),abs(dy))!=1)
     for i in range(8,size-8):put(6,i,i%2==0);put(i,6,i%2==0)
     for i in range(9):fixed[8][i] = fixed[i][8] = True
     for i in range(8):fixed[8][size-1-i] = fixed[size-1-i][8] = True
     put(8,size-8,True)
+    if version>=7:
+        info = bch(version,0x1f25,12)
+        for i in range(18):
+            dark,a,b = bool(info>>i&1),size-11+i%3,i//3
+            put(a,b,dark);put(b,a,dark)
     bits = ''.join(f'{b:08b}' for b in codewords(raw,version))
     places,index = [],0
     # Two-column strips from the right, skipping the vertical timing pattern in column 6.

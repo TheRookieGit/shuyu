@@ -154,6 +154,18 @@ async function run(){
   assert.match($('#upload-error').textContent,/取出 2 本小说，另有 1 个 PDF/);
   $('#batch-change').click();
   console.log('PASS archives unpacked on the Windows side, every novel named and kept');
+  $('[data-source="netdisk"]').click();assert.ok($('#upload-form').hidden);assert.ok(!$('#netdisk-form').hidden);
+  await waitFor(()=>$$('#netdisk-accounts li').length===2,'drive accounts');assert.match($('#netdisk-accounts').textContent,/夸克网盘：未登录/);
+  $('#netdisk-text').value='我用夸克网盘分享了「书」 链接：https://pan.quark.cn/s/qshare';$('#netdisk-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
+  await waitFor(()=>$('#netdisk-dialog').open&&$('#netdisk-qr svg'),'Quark sign-in QR code');assert.match($('#netdisk-login-status').textContent,/夸克 App/);
+  await waitFor(()=>!$('#setup').hidden&&!$('#batch-chosen').hidden,'signed in, then the share downloaded into the library',15000);
+  assert.ok(!$('#netdisk-dialog').open);assert.match($('#batch-titles').textContent,/夸克书/);assert.match($('#batch-titles').textContent,/压缩里的书/);
+  assert.match($('#netdisk-error').textContent,/跳过了 1 个不是小说的文件：封面\.jpg/);assert.equal($('#netdisk-text').value,'','a finished link is cleared');
+  assert.match($('#netdisk-accounts').textContent,/夸克网盘：已登录 · 夸克用户/);
+  $('[data-netdisk-login="baidu"]').click();await waitFor(()=>$('#netdisk-dialog').open&&$('#netdisk-qr img'),'Baidu sign-in QR image');
+  await waitFor(()=>!$('#netdisk-dialog').open&&/百度网盘：已登录 · 百度用户/.test($('#netdisk-accounts').textContent),'Baidu signed in',10000);
+  $('#batch-change').click();
+  console.log('PASS share links from Quark and Baidu: scan to sign in, novels and archives downloaded into the library');
   $('#ai-open').click();await waitFor(()=>$('#ai-dialog').open&&/沿用完整版/.test($('#ai-inherited').textContent),'Lite settings follow the full page at first');
   $('#ai-transport').value='terminal';$('#ai-transport').dispatchEvent(new w.Event('change'));assert.ok($('#ai-api').hidden);
   $('#ai-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await waitFor(()=>!$('#ai-dialog').open,'Lite settings saved');

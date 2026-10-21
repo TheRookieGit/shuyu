@@ -33,6 +33,7 @@ from catalog_tree import CatalogTree
 from lite_upload import Uploads, skipped_by_scan
 from book_names import metadata
 from weread import WeRead, WeReadError
+from netdisk import NetDisk, NetDiskError
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_ROOT = r'Z:\老婆小说漫画'
@@ -105,6 +106,7 @@ class Library:
         self.tree = CatalogTree(self)
         self.uploads = Uploads(self)
         self.weread = WeRead(self)
+        self.netdisk = NetDisk(self)
         self.uploads.move_versions()
 
     @contextmanager
@@ -603,6 +605,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1),query.get('category','')))
             if url.path=='/api/weread':return self.json(self.lib.weread.status())
             if url.path=='/api/weread/upload':return self.json(self.lib.weread.task(query.get('task','')))
+            if url.path=='/api/netdisk':return self.json(self.lib.netdisk.status())
+            if url.path=='/api/netdisk/task':return self.json(self.lib.netdisk.task(query.get('task','')))
             if url.path=='/api/download':
                 try:book_id,version_id = self.lib.access.redeem(query.get('ticket'))
                 except PermissionError as exc:return self.json({'error':str(exc)},403)
@@ -618,6 +622,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except WeReadError as exc:self.json({'error':str(exc),'weread_login':exc.login},400)
+        except NetDiskError as exc:self.json({'error':str(exc),'netdisk_login':exc.login},400)
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError) as exc:self.json({'error':str(exc)},400)
 
     def do_POST(self):
@@ -682,6 +687,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=='/api/weread/logout':
                 self.lib.weread.forget();return self.json(self.lib.weread.status())
             if self.path=='/api/weread/upload':return self.json(self.lib.weread.upload(data['id'],str(data.get('version_id',''))))
+            # Quark and Baidu share links: sign in by QR code once, then download novels into the library.
+            if self.path=='/api/netdisk/login':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).login())
+            if self.path=='/api/netdisk/logout':return self.json(self.lib.netdisk.drive(str(data.get('drive',''))).logout())
+            if self.path=='/api/netdisk/fetch':return self.json(self.lib.netdisk.fetch(str(data.get('text',''))[:20000]))
             if self.path=='/api/scan':return self.json({'started':self.lib.start_scan(force=True)})
             if self.path=='/api/settings':
                 self.lib.settings(data)
@@ -693,6 +702,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({'error':'Not found'},404)
         except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         except WeReadError as exc:self.json({'error':str(exc),'weread_login':exc.login},400)
+        except NetDiskError as exc:self.json({'error':str(exc),'netdisk_login':exc.login},400)
         except (UserError,ArchiveError,CleanError,OSError,ValueError,KeyError,TypeError) as exc:self.json({'error':str(exc)},400)
 
 

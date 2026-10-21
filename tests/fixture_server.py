@@ -9,6 +9,7 @@ from server import Handler, ThreadingHTTPServer
 from ai_cleaner import ClaudeClient
 from claude_terminal import ClaudeTerminal
 from tests.test_weread import FakeWeRead
+from tests.test_netdisk import FakeDrives
 
 case=LibraryTests()
 case.setUp()
@@ -33,7 +34,9 @@ providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
     patch('claude_terminal.find_command',return_value=['synthetic-claude.exe']),
     patch.dict('os.environ',{'ANTHROPIC_API_KEY':''}),
     # WeRead sign-in and upload answered locally; nothing reaches weread.qq.com.
-    patch('weread.fetch',side_effect=FakeWeRead()),patch('weread.POLL',.01)]
+    patch('weread.fetch',side_effect=FakeWeRead()),patch('weread.POLL',.01),
+    # So are Quark's and Baidu's share links and QR sign-in.
+    patch('netdisk.fetch',side_effect=FakeDrives()),patch('netdisk.POLL',.01)]
 for provider in providers:provider.start()
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 server.library=case.lib

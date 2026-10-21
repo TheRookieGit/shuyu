@@ -35,7 +35,7 @@ async function api(path,data,file){
   await authReady;const response=file?await reach(path,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file}):await request(path,data);
   if(response.status===401){store.set('shuyu-token','');showLogin('登录已过期，请重新登录。');throw new Error('登录已过期，请重新登录');}
   let result;try{result=await response.json();}catch{showOffline();throw new OfflineError();}
-  if(!response.ok)throw Object.assign(new Error(result.error||'操作未完成'),{wereadLogin:!!result.weread_login});return result;
+  if(!response.ok)throw Object.assign(new Error(result.error||'操作未完成'),{wereadLogin:!!result.weread_login,netdiskLogin:result.netdisk_login||''});return result;
 }
 let started=false;
 function showOffline(){const dialog=$('#offline');$('#offline-server').hidden=!hostedPage;$('#offline-detail').textContent=hostedPage?'当前连接的地址：'+serverBase():'';if(!dialog.open)dialog.showModal();}
@@ -76,7 +76,8 @@ $('#search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(searc
 $('#results').onclick=event=>{const button=event.target.closest('[data-book]');if(button)chooseBook(button.dataset.book);};
 $('.source-tabs').onclick=event=>{const tab=event.target.closest('[data-source]');if(!tab)return;
   $$('.source-tab').forEach(el=>{el.classList.toggle('active',el===tab);el.setAttribute('aria-selected',String(el===tab));});
-  $('#library-source').hidden=tab.dataset.source!=='library';$('#upload-form').hidden=tab.dataset.source!=='upload';};
+  $('#library-source').hidden=tab.dataset.source!=='library';$('#upload-form').hidden=tab.dataset.source!=='upload';$('#netdisk-form').hidden=tab.dataset.source!=='netdisk';
+  if(tab.dataset.source==='netdisk')refreshNetdisk();};
 
 // Or upload one: it is saved into the Windows library and then processed like any other book.
 // The same rules as book_names.py on the backend, so what is shown here is what gets saved.
@@ -149,10 +150,76 @@ $('#upload-form').onsubmit=async event=>{
   // Only the books that did not go up stay in the list, ready to try again.
   lite.uploads=lite.uploads.filter(item=>!item.done);renderUploads();
   if(failed.length||notes.length)fail([...(failed.length?[`有 ${failed.length} 个文件没有上传：`,...failed]:[]),...notes].join('\n'));
-  if(!books.length)return;
+  if(books.length)await openSaved(books);
+};
+// Uploaded or downloaded from a share: one book goes straight to setup, several form a batch.
+async function openSaved(books){
   toast(books.length>1?`已保存 ${books.length} 本到 Windows 书库的 Lite上传 文件夹`:'已保存到 Windows 书库：'+books[0].rel);
   if(books.length===1)await chooseBook(books[0].id);else chooseBatch(books);
+}
+
+// Or a share link from Quark (夸克网盘) or Baidu (百度网盘): the Windows backend saves the novels into the reader's
+// own drive, downloads them into the library and stores each like an upload.
+const netdisk={signing:'',timer:null,pending:false};
+const NETDISK_BUSY=['waiting','scanned','checking'];
+function renderNetdisk(status){
+  $('#netdisk-accounts').innerHTML=Object.entries(status).map(([key,d])=>`<li><span class="weread-dot${d.signed_in?' on':''}" aria-hidden="true"></span><span>${escapeHTML(d.label)}：${d.signed_in?'已登录'+(d.name?' · '+escapeHTML(d.name):''):'未登录'}</span>${d.signed_in?`<button class="link-button" type="button" data-netdisk-logout="${key}">退出</button>`:`<button class="link-button" type="button" data-netdisk-login="${key}">扫码登录</button>`}</li>`).join('');
+}
+function renderNetdiskLogin(drive){
+  const login=drive.login||{},shown=['waiting','scanned'].includes(login.state),key=login.link||login.image||'';
+  $('#netdisk-dialog-title').textContent=`扫码登录${drive.label}`;$('#netdisk-qr').hidden=!shown;
+  if(shown&&$('#netdisk-qr').dataset.key!==key){$('#netdisk-qr').innerHTML=login.qr?qrSVG(login.qr):`<img src="${escapeHTML(login.image)}" alt="${escapeHTML(drive.label)}登录二维码">`;$('#netdisk-qr').dataset.key=key;}
+  $('#netdisk-login-status').textContent={waiting:`用${drive.app}扫一扫这个二维码，然后在手机上确认登录。二维码过期后会自动换新。`,scanned:'已扫码，请在手机上确认登录。',
+    checking:`正在登录${drive.label}…`,failed:login.error||'登录没有完成，请重新获取二维码。'}[login.state]||'';
+  $('#netdisk-retry').hidden=login.state!=='failed';
+}
+async function refreshNetdisk(){try{renderNetdisk(await api('/api/netdisk'));}catch(error){onError(error);}}
+async function pollNetdisk(){
+  clearTimeout(netdisk.timer);if(!$('#netdisk-dialog').open)return;
+  try{
+    const status=await api('/api/netdisk'),drive=status[netdisk.signing];renderNetdisk(status);if(!drive||!$('#netdisk-dialog').open)return;
+    renderNetdiskLogin(drive);
+    // Closing the dialog drops the pending download, so take it first.
+    if(drive.signed_in){const pending=netdisk.pending;$('#netdisk-dialog').close();toast(`${drive.label}已登录`);if(pending)fetchNetdisk();return;}
+    if(NETDISK_BUSY.includes(drive.login.state))netdisk.timer=setTimeout(pollNetdisk,2000);
+  }catch(error){onError(error);}
+}
+async function signInNetdisk(key){
+  try{
+    netdisk.signing=key;renderNetdiskLogin(await api('/api/netdisk/login',{drive:key}));
+    if(!$('#netdisk-dialog').open)$('#netdisk-dialog').showModal();clearTimeout(netdisk.timer);netdisk.timer=setTimeout(pollNetdisk,2000);
+  }catch(error){netdisk.pending=false;onError(error);}
+}
+$('#netdisk-accounts').onclick=async event=>{
+  const login=event.target.closest('[data-netdisk-login]'),logout=event.target.closest('[data-netdisk-logout]');
+  if(login)signInNetdisk(login.dataset.netdiskLogin);
+  if(logout)try{await api('/api/netdisk/logout',{drive:logout.dataset.netdiskLogout});refreshNetdisk();}catch(error){onError(error);}
 };
+$('#netdisk-retry').onclick=()=>signInNetdisk(netdisk.signing);
+$('#netdisk-close').onclick=()=>$('#netdisk-dialog').close();
+$('#netdisk-dialog').addEventListener('close',()=>{clearTimeout(netdisk.timer);netdisk.pending=false;});
+$('#netdisk-form').onsubmit=event=>{event.preventDefault();fetchNetdisk();};
+async function fetchNetdisk(){
+  const button=$('button[type="submit"]',$('#netdisk-form')),text=$('#netdisk-text').value.trim(),progress=$('#netdisk-progress');
+  const fail=message=>{$('#netdisk-error').textContent=message;$('#netdisk-error').hidden=!message;};
+  const signIn=key=>{netdisk.pending=true;signInNetdisk(key);};
+  fail('');if(!text)return fail('请粘贴夸克网盘或百度网盘的分享链接。');
+  button.disabled=true;
+  try{
+    let task=await api('/api/netdisk/fetch',{text});
+    while(!['done','failed'].includes(task.state)){
+      progress.hidden=false;progress.textContent=task.message;
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      task=await api('/api/netdisk/task?'+new URLSearchParams({task:task.id}));
+    }
+    progress.hidden=true;
+    fail([...(task.state==='failed'?[task.message]:[]),...(task.failed.length?[`有 ${task.failed.length} 处没有下载：`,...task.failed]:[]),...task.notes,
+      ...(task.skipped.length?[`跳过了 ${task.skipped.length} 个不是小说的文件：${task.skipped.slice(0,5).join('、')}${task.skipped.length>5?' 等':''}`]:[])].join('\n'));
+    if(task.login){refreshNetdisk();return signIn(task.login);}
+    if(task.books.length){$('#netdisk-text').value='';await openSaved(task.books);}
+  }catch(error){progress.hidden=true;if(error.netdiskLogin)signIn(error.netdiskLogin);else if(!(error instanceof OfflineError))fail(error.message);}
+  finally{button.disabled=false;}
+}
 async function chooseBook(id,versionId){
   try{
     const book=await api('/api/book?'+new URLSearchParams({id}));lite.book=book;const versions=book.versions||[];

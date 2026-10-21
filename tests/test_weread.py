@@ -1,4 +1,5 @@
 from email.message import Message
+import hashlib
 import json
 import re
 import threading
@@ -118,7 +119,12 @@ class WeReadTests(LibraryFixture,unittest.TestCase):
         self.assertEqual([''.join('1' if v else '0' for v in row) for row in matrix('hi')],HI)
         link = 'https://weread.qq.com/web/confirm?pf=2&uid=18b82ade-3c5e-4622-a1e8-3d99d6a4043a'
         self.assertEqual(len(matrix(link)),37,'a WeRead login link fits version 5')
-        with self.assertRaises(ValueError):matrix('x'*200)
+        # A Quark login link needs version 10: version information, six alignment patterns and a 16-bit length.
+        quark = ('https://su.quark.cn/4_eMHBJ?token=sta3263335fju085yqn3yro5tf67mdc9&client_id=532&ssb=weblogin&uc_param_str='
+                 '&uc_biz_str=S%3Acustom%7COPT%3ASAREA%400%7COPT%3AIMMERSIVE%401%7COPT%3ABACK_BTN_STYLE%400')
+        rows = '\n'.join(''.join('1' if v else '0' for v in row) for row in matrix(quark))
+        self.assertEqual(hashlib.sha256(rows.encode()).hexdigest(),'55d46b48263159552082105df2a19052082306f2804a6eff2c196057d60c221e','python-qrcode, version 10, mask 2')
+        with self.assertRaises(ValueError):matrix('x'*214)
 
     def test_scan_to_sign_in_then_upload_a_version_to_the_shelf(self):
         status = self.sign_in()

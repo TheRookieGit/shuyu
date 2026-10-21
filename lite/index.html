@@ -35,7 +35,7 @@
       <section id="pick" class="card">
         <h2><span class="step">1</span>选一本小说</h2>
         <div id="search-area">
-          <div class="source-tabs" role="tablist"><button class="source-tab active" type="button" data-source="library" role="tab" aria-selected="true">从书库选</button><button class="source-tab" type="button" data-source="upload" role="tab" aria-selected="false">上传一本</button></div>
+          <div class="source-tabs" role="tablist"><button class="source-tab active" type="button" data-source="library" role="tab" aria-selected="true">从书库选</button><button class="source-tab" type="button" data-source="upload" role="tab" aria-selected="false">上传一本</button><button class="source-tab" type="button" data-source="netdisk" role="tab" aria-selected="false">网盘链接</button></div>
           <div id="library-source">
             <input id="search" type="search" placeholder="搜索书名或作者；留空显示最近发现的书" autocomplete="off">
             <p id="result-count" class="hint"></p>
@@ -47,6 +47,14 @@
             <p class="hint">书名和作者会从文件名和书里自动识别，需要的话可以修改。压缩包会在 Windows 电脑上自动解压（包括包中包），把里面的每本小说识别书名作者后单独保存。小说和压缩包都保存在 Windows 书库的「Lite上传」文件夹里，以书名和作者命名，并标注【lite上传】；完整版书屿里也能看到。</p>
             <p id="upload-error" class="notice" hidden></p>
             <button class="button primary" type="submit">上传到 Windows 书库</button>
+          </form>
+          <form id="netdisk-form" hidden>
+            <textarea id="netdisk-text" rows="3" placeholder="粘贴夸克网盘或百度网盘的分享链接，提取码可以一起粘贴；一次可以粘贴多个链接" spellcheck="false"></textarea>
+            <ul id="netdisk-accounts" class="netdisk-accounts"></ul>
+            <p class="hint">Windows 电脑会把分享里的 TXT、MD、EPUB 小说和压缩包转存到你自己网盘的「书屿转存」文件夹，再下载到书库的「Lite上传」文件夹，和上传的书一样识别书名作者、自动解压；其他格式会跳过。第一次使用要用夸克 App 或百度网盘 App 扫码登录，登录保存在 Windows 电脑上。</p>
+            <p id="netdisk-progress" class="hint" role="status" hidden></p>
+            <p id="netdisk-error" class="notice" hidden></p>
+            <button class="button primary" type="submit">从网盘下载到 Windows 书库</button>
           </form>
         </div>
         <div id="batch-chosen" hidden>
@@ -140,6 +148,13 @@
       <div class="row"><button class="button primary" type="submit">保存</button><button id="ai-test" class="button" type="button">保存并测试连接</button></div>
       <div class="row"><button id="ai-inherit" class="link-button" type="button">改回沿用完整版的设置</button><button id="ai-close" class="link-button" type="button">关闭</button></div>
     </form>
+  </dialog>
+  <dialog id="netdisk-dialog" class="offline">
+    <h2 id="netdisk-dialog-title">扫码登录网盘</h2>
+    <div id="netdisk-qr" class="weread-qr" hidden></div>
+    <p id="netdisk-login-status" class="hint" role="status"></p>
+    <p class="hint">登录保存在 Windows 电脑上，只用来把分享里的书转存到你的网盘再下载。这是照着网盘网页版的做法实现的，不是官方接口；网盘改版后，可能要等书屿更新才能继续使用。</p>
+    <div class="row"><button id="netdisk-retry" class="button primary" type="button" hidden>重新获取二维码</button><button id="netdisk-close" class="link-button" type="button">关闭</button></div>
   </dialog>
   <dialog id="offline" class="offline">
     <h2>连不上 Windows 电脑上的书屿</h2>
