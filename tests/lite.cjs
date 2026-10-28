@@ -164,6 +164,11 @@ async function run(){
   assert.match($('#netdisk-accounts').textContent,/夸克网盘：已登录 · 夸克用户/);
   $('[data-netdisk-login="baidu"]').click();await waitFor(()=>$('#netdisk-dialog').open&&$('#netdisk-qr img'),'Baidu sign-in QR image');
   await waitFor(()=>!$('#netdisk-dialog').open&&/百度网盘：已登录 · 百度用户/.test($('#netdisk-accounts').textContent),'Baidu signed in',10000);
+  assert.match($('#netdisk-form').textContent,/在书屿和 Plexus 之间共用/);
+  let asked='';w.confirm=message=>{asked=message;return false;};$('[data-netdisk-logout="baidu"]').click();
+  assert.match(asked,/同时退出 Plexus 和心愿中枢里的百度网盘/);assert.equal(posted('/api/netdisk/logout').length,0,'a cancelled sign-out stays signed in');
+  w.confirm=()=>true;$('[data-netdisk-logout="baidu"]').click();
+  await waitFor(()=>/百度网盘：未登录/.test($('#netdisk-accounts').textContent),'Baidu signed out everywhere');
   $('#batch-change').click();
   console.log('PASS share links from Quark and Baidu: scan to sign in, novels and archives downloaded into the library');
   $('#ai-open').click();await waitFor(()=>$('#ai-dialog').open&&/沿用完整版/.test($('#ai-inherited').textContent),'Lite settings follow the full page at first');

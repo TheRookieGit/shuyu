@@ -36,7 +36,7 @@ providers=[patch.object(ClaudeClient,'analyze',side_effect=synthetic_provider),
     # WeRead sign-in and upload answered locally; nothing reaches weread.qq.com.
     patch('weread.fetch',side_effect=FakeWeRead()),patch('weread.POLL',.01),
     # So are Quark's and Baidu's share links and QR sign-in.
-    patch('netdisk.fetch',side_effect=FakeDrives()),patch('netdisk.POLL',.01)]
+    patch('collectionkit.netdisk.fetch',side_effect=FakeDrives()),patch('collectionkit.netdisk.POLL',.01)]
 for provider in providers:provider.start()
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
 server.library=case.lib

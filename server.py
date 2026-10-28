@@ -20,6 +20,9 @@ import webbrowser
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Code shared with Plexus and the wish hub: the my-collections repository, kept as a submodule.
+sys.path.insert(0,str(Path(__file__).resolve().parent/'vendor'/'my-collections'))
+
 from archive_engine import ArchiveEngine, ArchiveError, ARCHIVES, BOOKS as DOCUMENTS, IMAGES, member_key, source_chain
 from platform_utils import reveal_in_explorer
 from ai_cleaner import Cleaner, CleanError

@@ -163,7 +163,7 @@ async function openSaved(books){
 const netdisk={signing:'',timer:null,pending:false};
 const NETDISK_BUSY=['waiting','scanned','checking'];
 function renderNetdisk(status){
-  $('#netdisk-accounts').innerHTML=Object.entries(status).map(([key,d])=>`<li><span class="weread-dot${d.signed_in?' on':''}" aria-hidden="true"></span><span>${escapeHTML(d.label)}：${d.signed_in?'已登录'+(d.name?' · '+escapeHTML(d.name):''):'未登录'}</span>${d.signed_in?`<button class="link-button" type="button" data-netdisk-logout="${key}">退出</button>`:`<button class="link-button" type="button" data-netdisk-login="${key}">扫码登录</button>`}</li>`).join('');
+  $('#netdisk-accounts').innerHTML=Object.entries(status).map(([key,d])=>`<li><span class="weread-dot${d.signed_in?' on':''}" aria-hidden="true"></span><span>${escapeHTML(d.label)}：${d.signed_in?'已登录'+(d.name?' · '+escapeHTML(d.name):''):'未登录'}</span>${d.signed_in?`<button class="link-button" type="button" data-netdisk-logout="${key}" data-label="${escapeHTML(d.label)}">退出</button>`:`<button class="link-button" type="button" data-netdisk-login="${key}">扫码登录</button>`}</li>`).join('');
 }
 function renderNetdiskLogin(drive){
   const login=drive.login||{},shown=['waiting','scanned'].includes(login.state),key=login.link||login.image||'';
@@ -193,7 +193,8 @@ async function signInNetdisk(key){
 $('#netdisk-accounts').onclick=async event=>{
   const login=event.target.closest('[data-netdisk-login]'),logout=event.target.closest('[data-netdisk-logout]');
   if(login)signInNetdisk(login.dataset.netdiskLogin);
-  if(logout)try{await api('/api/netdisk/logout',{drive:logout.dataset.netdiskLogout});refreshNetdisk();}catch(error){onError(error);}
+  // The sign-in is shared, so signing out here signs out of Plexus and the wish hub as well.
+  if(logout&&confirm(`会同时退出 Plexus 和心愿中枢里的${logout.dataset.label}，确定退出吗？`))try{await api('/api/netdisk/logout',{drive:logout.dataset.netdiskLogout});refreshNetdisk();}catch(error){onError(error);}
 };
 $('#netdisk-retry').onclick=()=>signInNetdisk(netdisk.signing);
 $('#netdisk-close').onclick=()=>$('#netdisk-dialog').close();

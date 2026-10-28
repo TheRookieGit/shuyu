@@ -23,6 +23,12 @@
 
 需要 Python 3.10 或更新版本。默认扫描 `Z:\老婆小说漫画`。
 
+网盘相关的代码和 Plexus 共用，放在 [my-collections](https://github.com/TheRookieGit/my-collections) 仓库的 `collectionkit` 里，作为 git submodule 放在 `vendor/my-collections`。clone 时要加 `--recursive`；已经 clone 过的，在项目文件夹里运行一次 `git submodule update --init`（缺了这部分，启动 .bat 会提示）：
+
+```powershell
+git clone --recursive https://github.com/TheRookieGit/shuyu.git
+```
+
 ```powershell
 python server.py
 python server.py --root "D:\我的小说" --port 8766
@@ -77,7 +83,7 @@ GitHub Pages 只托管 `web/` 中的静态页面，不包含任何书目数据�
 
 第一步切换到 **网盘链接**，粘贴夸克网盘或百度网盘的分享链接（提取码可以一起粘贴，`?pwd=` 也行；一次可以粘贴多个链接），点 **从网盘下载到 Windows 书库**。Windows 电脑会把分享里的 TXT、MD、EPUB 小说和压缩包（包括子文件夹里的）转存到你自己网盘的 `书屿转存` 文件夹，再下载到书库的 `Lite上传` 文件夹，和上传的书一样识别书名作者、自动解压；图片、PDF 等其他文件会跳过并提示。下载完一本就直接进入处理，多本则作为一批。
 
-第一次用某个网盘时会弹出二维码：夸克用夸克 App 扫，百度用百度网盘 App 扫，然后在手机上确认。夸克的二维码大约 3 分钟过期，过期后会自动换新。登录保存在 Windows 电脑上（加密后存在 `library.sqlite3` 里），**网盘链接** 下面显示两个网盘的登录账号，可以退出。和微信读书一样，这是照着两个网盘网页版的做法实现的，不是官方接口；网盘改版后，可能要更新书屿才能继续使用。非会员的下载速度会被网盘限制，大压缩包可能要等一会儿。
+第一次用某个网盘时会弹出二维码：夸克用夸克 App 扫，百度用百度网盘 App 扫，然后在手机上确认。夸克的二维码大约 3 分钟过期，过期后会自动换新。登录保存在 Windows 电脑上（加密后存在 `%LOCALAPPDATA%\CollectionKit\netdisk.sqlite3` 里，不上传到任何地方），**网盘链接** 下面显示两个网盘的登录账号，可以退出。**登录在书屿、Plexus 和心愿中枢之间共用**：在任意一处扫码登录，其他地方不用再扫；在任意一处退出，所有地方都会一起退出，所以退出前会再确认一次。以前在书屿里登录过的，升级后会自动沿用，不用重新扫码。和微信读书一样，这是照着两个网盘网页版的做法实现的，不是官方接口；网盘改版后，可能要更新书屿才能继续使用。非会员的下载速度会被网盘限制，大压缩包可能要等一会儿。
 
 ### 传到微信读书
 

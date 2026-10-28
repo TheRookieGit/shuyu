@@ -4,7 +4,7 @@ name: Build Windows app
 on:
   push:
     branches: [main]
-    paths: ['*.py', 'web/**', 'lite/**', 'assets/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
+    paths: ['*.py', 'web/**', 'lite/**', 'assets/**', 'vendor/**', 'requirements-app.txt', '.github/workflows/windows-app.yml']
   workflow_dispatch:
 
 permissions:
@@ -19,6 +19,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        # The netdisk code shared with Plexus comes from the my-collections submodule.
+        with:
+          submodules: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -31,7 +34,7 @@ jobs:
         run: '@{ sha = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 build_info.json'
       - name: Build
         run: >
-          pyinstaller --noconfirm --clean --windowed --name AiqiShuyu
+          pyinstaller --noconfirm --clean --windowed --name AiqiShuyu --paths vendor/my-collections
           --icon assets/shuyu.ico --add-data "web;web" --add-data "lite;lite" --add-data "assets/shuyu.ico;assets" --add-data "build_info.json;."
           desktop_app.py
       - name: Smoke test the packaged service

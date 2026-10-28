@@ -1,11 +1,15 @@
 from email.message import Message
 import json
+import os
+import tempfile
 import threading
 import time
 import unittest
 from unittest.mock import patch
 import urllib.parse
 
+from collectionkit.credentials import Credentials
+from collectionkit.secret import protect_secret
 import netdisk
 from lite_upload import UPLOAD_FOLDER
 from netdisk import NetDisk, NetDiskError, links, wanted
@@ -24,6 +28,7 @@ class FakeDrives:
         self.quark_logged_in = True
         self.quark_folder = self.baidu_folder = False
         self.saved = {}
+        self.dropped = set()
 
     def reply(self,data=None,status=200,raw=None,cookies=(),location=None,sink=None,content=None):
         headers = Message()
@@ -60,6 +65,7 @@ class FakeDrives:
             return self.reply({'success':True,'code':'OK','data':{'nickname':'夸克用户'}},cookies=['__pus=pus-cookie; Domain=.quark.cn; Path=/; HttpOnly'])
         if url.netloc=='dl.quark.test':return self.reply(status=302,location='https://cdn.quark.test'+url.path,raw=b'')
         if url.netloc=='cdn.quark.test':
+            if url.path in self.dropped:raise netdisk.Unreachable('下载中断了，请稍后再试。')
             return self.reply(sink=sink,content={'/s-f1':QUARK_NOVEL,'/s-f2':ZIPPED}[url.path])
         if not self.quark_logged_in or cookies.get('__pus')!='pus-cookie':return self.reply({'status':401,'code':31001,'message':'require login [guest]'},401)
         path = url.path.removeprefix('/1/clouddrive/')
@@ -139,15 +145,26 @@ def wait(condition,label,seconds=5):
 
 class NetDiskTests(LibraryFixture,unittest.TestCase):
     def setUp(self):
-        super().setUp()
+        # Sign-ins are shared through a store outside the library; each test gets its own.
+        self.shared = tempfile.TemporaryDirectory()
         self.fake = FakeDrives()
-        self.patches = [patch('netdisk.fetch',side_effect=lambda request,timeout,sink=None:self.fake(request,timeout,sink)),patch('netdisk.POLL',.01)]
+        self.patches = [patch.dict(os.environ,{'COLLECTIONKIT_DIR':self.shared.name}),
+                        patch('collectionkit.netdisk.fetch',side_effect=lambda request,timeout,sink=None:self.fake(request,timeout,sink)),
+                        patch('collectionkit.netdisk.POLL',.01)]
         for item in self.patches:item.start()
+        super().setUp()
         self.lib.netdisk = NetDisk(self.lib)
 
     def tearDown(self):
-        for item in reversed(self.patches):item.stop()
         super().tearDown()
+        for item in reversed(self.patches):item.stop()
+        self.shared.cleanup()
+
+    def remember(self,key,name,cookies):
+        """A sign-in as 书屿 saved it in its own settings before sign-ins were shared."""
+        values = {'name':name,'cookies':protect_secret(json.dumps([{'name':n,'value':v,'domain':'.quark.cn','path':'/','secure':False,'expires':None}
+                                                                    for n,v in cookies.items()]))}
+        with self.lib.db() as db:db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)',('netdisk_'+key,json.dumps(values,ensure_ascii=False)))
 
     def sign_in(self,key):
         status = self.lib.netdisk.drive(key).login()
@@ -220,6 +237,44 @@ class NetDiskTests(LibraryFixture,unittest.TestCase):
         self.sign_in('quark')
         self.assertEqual(self.lib.netdisk.drive('quark').logout()['signed_in'],False)
         self.assertFalse(NetDisk(self.lib).drive('quark').signed_in)
+
+    def test_a_sign_in_saved_before_sharing_moves_to_the_shared_store_once(self):
+        self.remember('quark','旧登录',{'__pus':'pus-cookie'})
+        moved = NetDisk(self.lib)
+        self.assertTrue(moved.drive('quark').signed_in);self.assertEqual(moved.status()['quark']['name'],'旧登录')
+        self.assertFalse(moved.status()['baidu']['signed_in'])
+        with self.lib.db() as db:self.assertTrue(db.execute("SELECT 1 FROM settings WHERE key='netdisk_quark'").fetchone(),'the old row stays for going back')
+        task = self.finished(moved.fetch('https://pan.quark.cn/s/qshare'))
+        self.assertEqual((task['state'],task['failed']),('done',[]),task)
+        # Signing out is shared too, and the old row is not taken up again.
+        moved.drive('quark').logout()
+        self.assertFalse(NetDisk(self.lib).drive('quark').signed_in)
+
+    def test_the_shared_sign_in_wins_over_one_saved_before_sharing(self):
+        self.sign_in('quark')
+        self.remember('quark','旧登录',{'__pus':'stale'})
+        again = NetDisk(self.lib)
+        self.assertEqual(again.status()['quark']['name'],'夸克用户');self.assertEqual(again.drive('quark').session.cookie('__pus'),'pus-cookie')
+
+    def test_signing_in_or_out_in_another_app_shows_here(self):
+        plexus = netdisk.Drives('Plexus转存',Credentials(self.shared.name))
+        plexus.drive('quark').login()
+        wait(lambda:plexus.status()['quark']['signed_in'],'signed in from the other app')
+        self.assertTrue(self.lib.netdisk.status()['quark']['signed_in']);self.assertEqual(self.lib.netdisk.status()['quark']['name'],'夸克用户')
+        task = self.finished(self.lib.netdisk.fetch('https://pan.quark.cn/s/qshare'))
+        self.assertEqual(task['state'],'done',task)
+        plexus.drive('quark').logout()
+        self.assertFalse(self.lib.netdisk.status()['quark']['signed_in'])
+        with self.assertRaises(NetDiskError) as caught:self.lib.netdisk.fetch('https://pan.quark.cn/s/qshare')
+        self.assertEqual(caught.exception.login,'quark')
+
+    def test_a_download_cut_off_fails_that_file_only(self):
+        self.sign_in('quark')
+        self.fake.dropped = {'/s-f2'}
+        task = self.finished(self.lib.netdisk.fetch('https://pan.quark.cn/s/qshare'))
+        self.assertEqual(task['state'],'done',task)
+        self.assertEqual([b['title'] for b in task['books']],['夸克书']);self.assertEqual(task['failed'],['合集.zip：下载中断了，请稍后再试。'])
+        self.assertFalse(list((self.data/'netdisk').glob('*/*')),'nothing half downloaded is left')
 
 
 if __name__=='__main__':

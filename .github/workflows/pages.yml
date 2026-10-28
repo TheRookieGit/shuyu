@@ -24,6 +24,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: actions/configure-pages@v5
       # The full page at the site root, Shuyu Lite under /lite/.
       - run: mkdir _site && cp -r web/. _site/ && cp -r lite _site/lite
