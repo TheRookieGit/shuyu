@@ -188,7 +188,12 @@ async function run(){
   await waitFor(()=>!d.querySelector('.wish-card:not(.downloaded)'),'wish deleted after second tap');
   $('[data-view="shelf"]').click();await waitFor(()=>d.querySelectorAll('.book-card').length===8,'back to the shelf');
   $('#settings-button').click();await waitFor(()=>$('#auto-clean-status').textContent.includes('已开启'),'auto-clean status');
-  assert.ok($('#auto-clean-enabled').checked);$('[data-close="settings-dialog"]').click();
+  assert.ok($('#auto-clean-enabled').checked);
+  await waitFor(()=>/还没有连接/.test($('#hub-status').textContent),'wish hub not connected yet');assert.ok(!$('#hub-pair').hidden&&$('#hub-disconnect').hidden);
+  $('[data-close="settings-dialog"]').click();
+  // The wish hub's 「查看」 link opens a book's details.
+  const linked=$('#book-grid [data-detail]').dataset.detail;w.location.hash='#book='+encodeURIComponent(linked);
+  await waitFor(()=>$('#detail-dialog').open&&!w.location.hash,'book opened from a #book= link');$('[data-close="detail-dialog"]').click();
   $('[data-mobile="filter"]').click();assert.ok($('#filter-panel').classList.contains('open'));assert.ok(!$('#sheet-backdrop').hidden);
   check('kind','comic');await waitFor(()=>$('#filter-done').textContent==='查看 2 本'&&!$('#mobile-filter-count').hidden,'live count in filter sheet');
   $('#filter-done').click();assert.ok($('#sheet-backdrop').hidden);$('#reset-filters').click();

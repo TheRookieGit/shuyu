@@ -87,7 +87,7 @@ async function openDetail(id,versionId){
 $('#detail-dialog').onclose=()=>{detailGeneration++;};
 document.addEventListener('click',event=>{const button=event.target.closest('[data-close]');if(button)$('#'+button.dataset.close).close();});
 $$('dialog:not(#login-dialog)').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)dialog.close();}}));
-function settings(){$('#password-input').value='';$('#remote-password-input').value='';renderRemoteAccess();if(typeof renderAutoClean==='function')renderAutoClean();$('#settings-dialog').showModal();}
+function settings(){$('#password-input').value='';$('#remote-password-input').value='';renderRemoteAccess();if(typeof renderAutoClean==='function')renderAutoClean();if(typeof renderHub==='function')renderHub();$('#settings-dialog').showModal();}
 function renderRemoteAccess(){
   $('#remote-access').hidden=false;$('#remote-local').hidden=!session.local;$('#remote-client').hidden=session.local;
   if(!session.local)return;

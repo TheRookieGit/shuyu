@@ -200,6 +200,13 @@ $('#netdisk-retry').onclick=()=>signInNetdisk(netdisk.signing);
 $('#netdisk-close').onclick=()=>$('#netdisk-dialog').close();
 $('#netdisk-dialog').addEventListener('close',()=>{clearTimeout(netdisk.timer);netdisk.pending=false;});
 $('#netdisk-form').onsubmit=event=>{event.preventDefault();fetchNetdisk();};
+// The wish hub's 「送到书屿下载」 hands its share links over as #links=, filled into the share-link page.
+function takeHandedLinks(){
+  const match=location.hash.match(/^#links=([\s\S]*)$/);if(!match)return;history.replaceState(null,'',location.pathname+location.search);
+  let text='';try{text=decodeURIComponent(match[1]);}catch{}if(!text.trim())return;
+  $('[data-source="netdisk"]').click();$('#netdisk-text').value=text.trim();$('#netdisk-text').focus();
+}
+window.addEventListener('hashchange',()=>{if(started)takeHandedLinks();});
 async function fetchNetdisk(){
   const button=$('button[type="submit"]',$('#netdisk-form')),text=$('#netdisk-text').value.trim(),progress=$('#netdisk-progress');
   const fail=message=>{$('#netdisk-error').textContent=message;$('#netdisk-error').hidden=!message;};
@@ -483,6 +490,6 @@ async function offerResume(){
   try{const response=await request('/api/session');if(!response.ok)throw new Error();session=await response.json();}
   catch{return showOffline();}
   if(!session.authenticated){store.set('shuyu-token','');return showLogin();}
-  started=true;signedIn();$('#app').hidden=false;$('#ai-open').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();
+  started=true;signedIn();$('#app').hidden=false;$('#ai-open').hidden=false;$('#logout').hidden=session.local;syncSetup();search();offerResume();takeHandedLinks();
   $('#share').hidden=$('#direct-share').hidden=typeof navigator.canShare!=='function';
 })();

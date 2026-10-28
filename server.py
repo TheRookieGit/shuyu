@@ -254,7 +254,7 @@ class Library:
                 self.scan_state['error'] = f'有 {len(errors)} 处暂时无法读取，已保留原有索引。'
             self.scan_state['phase'] = '合并重复书目'
             self.organizer.refresh()
-            self.wishlist.match()
+            self.wishlist.refresh()
             if self.background:
                 self.after_scan()
             self.scan_state['last_scan'] = time.time()
@@ -275,7 +275,7 @@ class Library:
                 db.execute(UPSERT_BOOK,(uid,root_string,rel,path.name,title,author,ext,'text' if ext in TEXT else 'epub',
                                         stat.st_size,stat.st_mtime,time.time(),str(time.time_ns()),0,'','','[]'))
             self.classifier.measure(uid)
-        self.organizer.refresh();self.wishlist.match()
+        self.organizer.refresh();self.wishlist.refresh()
         if self.scan_state['running']:
             # A scan that already walked past the folder would mark the files missing; look again once it ends.
             threading.Thread(target=self._scan_after_current,daemon=True).start()
@@ -603,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/classification':return self.json(self.lib.classifier.summary())
             if url.path=='/api/facets':return self.json(self.lib.organizer.facets())
             if url.path=='/api/wishlist':return self.json(self.lib.wishlist.items(query.get('q','')))
+            if url.path=='/api/hub':return self.json(self.lib.wishlist.hub_status())
             if url.path=='/api/auto-clean':return self.json(self.lib.auto.status())
             if url.path=='/api/tree':return self.json(self.lib.tree.node(json.loads(query.get('path','[]'))))
             if url.path=='/api/clean/job':return self.json(self.lib.cleaner.public(query['job_id'],query.get('page',1),query.get('category','')))
@@ -669,6 +670,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(config)
             if self.path=='/api/wishlist/save':return self.json(self.lib.wishlist.save(data))
             if self.path=='/api/wishlist/delete':return self.json(self.lib.wishlist.delete(str(data.get('id',''))))
+            if self.path=='/api/hub/pair':return self.json(self.lib.wishlist.pair(str(data.get('token',''))))
+            if self.path=='/api/hub/unpair':return self.json(self.lib.wishlist.unpair())
             if self.path=='/api/book/link':return self.json(self.lib.wishlist.set_link(data['id'],data.get('url','')))
             if self.path=='/api/auto-clean/config':return self.json(self.lib.auto.configure(data))
             if self.path=='/api/auto-clean/retry':return self.json(self.lib.auto.retry())

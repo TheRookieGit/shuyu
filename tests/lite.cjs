@@ -169,6 +169,10 @@ async function run(){
   assert.match(asked,/同时退出 Plexus 和心愿中枢里的百度网盘/);assert.equal(posted('/api/netdisk/logout').length,0,'a cancelled sign-out stays signed in');
   w.confirm=()=>true;$('[data-netdisk-logout="baidu"]').click();
   await waitFor(()=>/百度网盘：未登录/.test($('#netdisk-accounts').textContent),'Baidu signed out everywhere');
+  // Sent from the wish hub: the share links arrive filled in.
+  $('[data-source="upload"]').click();w.location.hash='#links='+encodeURIComponent('https://pan.quark.cn/s/qshare 提取码 1234');
+  await waitFor(()=>!$('#netdisk-form').hidden&&$('#netdisk-text').value==='https://pan.quark.cn/s/qshare 提取码 1234','links handed over by the wish hub');
+  assert.equal(w.location.hash,'');$('#netdisk-text').value='';
   $('#batch-change').click();
   console.log('PASS share links from Quark and Baidu: scan to sign in, novels and archives downloaded into the library');
   $('#ai-open').click();await waitFor(()=>$('#ai-dialog').open&&/沿用完整版/.test($('#ai-inherited').textContent),'Lite settings follow the full page at first');

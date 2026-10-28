@@ -68,4 +68,23 @@ $('#mobile-nav').onclick=event=>{
   else if(action==='settings'){setFilterSheet(false);settings();}
   else{setView(action);$('.catalog-shell').scrollIntoView({behavior:'smooth'});}
 };
-refreshWishCount();
+// The wish hub (心愿中枢): connect with a pairing code made in the hub; the wishlist then follows the hub's novels.
+async function renderHub(){
+  try{const hub=await api('/api/hub');
+    $('#hub-status').textContent=hub.paired?`已连接 · 想看清单来自心愿中枢（${number(hub.wishes)} 本）${hub.queued?` · ${number(hub.queued)} 项等联网后发送`:''}${hub.error?' · '+hub.error:''}`:'还没有连接。';
+    $('#hub-pair').hidden=hub.paired;$('#hub-disconnect').hidden=!hub.paired;
+  }catch(error){$('#hub-status').textContent=error.message;}
+}
+$('#hub-connect').onclick=async()=>{const button=$('#hub-connect');button.disabled=true;
+  try{await api('/api/hub/pair',{token:$('#hub-token').value});$('#hub-token').value='';toast('已连接心愿中枢');await renderHub();if(state.view==='wish')await loadWishlist();else refreshWishCount();}
+  catch(error){$('#hub-status').textContent=error.message;}finally{button.disabled=false;}};
+$('#hub-disconnect').onclick=async()=>{
+  const button=$('#hub-disconnect');
+  if(!button.dataset.confirm){button.dataset.confirm='1';button.textContent='再点一次确认断开';return;}
+  delete button.dataset.confirm;button.textContent='断开连接';
+  try{await api('/api/hub/unpair',{});toast('已断开心愿中枢');await renderHub();if(state.view==='wish')await loadWishlist();else refreshWishCount();}catch(error){onError(error);}};
+// The hub's 「查看」 opens a matched book here as #book=<id>.
+function openHashBook(){const match=location.hash.match(/^#book=(.+)$/);if(!match)return;history.replaceState(null,'',location.pathname+location.search);
+  try{openDetail(decodeURIComponent(match[1]));}catch{}}
+window.addEventListener('hashchange',openHashBook);
+refreshWishCount();openHashBook();
