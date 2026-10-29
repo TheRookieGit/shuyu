@@ -98,5 +98,24 @@ class HubWishlistTests(LibraryFixture,unittest.TestCase):
         self.assertEqual([i['id'] for i in self.wishes.items()['items']],['h1'])
 
 
+    def test_screenshots_come_from_the_hub_and_go_back_with_the_wish(self):
+        self.fake.images['shot-hub-1'] = 'data:image/png;base64,iVBO'
+        self.fake.add(wish('h1','截图里的书',shots=['shot-hub-1'],rating=5))
+        self.wishes.pair(self.fake.token('shuyu'))
+        listed = self.wishes.items()['items'][0]
+        self.assertEqual(listed['shots'],['shot-hub-1'])
+        self.assertEqual(self.wishes.shot('shot-hub-1')['data'],'data:image/png;base64,iVBO')
+        added = self.wishes.add_shot('data:image/jpeg;base64,/9j/')['id']
+        self.wishes.save({'id':'h1','title':'截图里的书','kind':'novel','shots':[added]})
+        sent = self.fake.items['h1'][0]
+        self.assertEqual(sent['shots'],[added],"the hub's screenshot removed, the new one added")
+        self.assertEqual(sent['rating'],5,'the rest of the hub item stays')
+        self.assertEqual(self.fake.images[added],'data:image/jpeg;base64,/9j/')
+        self.wishes.save({'id':'h1','title':'改个名','kind':'novel'})
+        self.assertEqual(self.fake.items['h1'][0]['shots'],[added],'saving without shots leaves them alone')
+        with self.assertRaises(ValueError):self.wishes.shot('shot-none')
+        self.wishes.unpair()
+        with self.assertRaises(ValueError):self.wishes.add_shot('data:image/jpeg;base64,/9j/')
+
 if __name__=='__main__':
     unittest.main()

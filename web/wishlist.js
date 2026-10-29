@@ -1,7 +1,7 @@
 'use strict';
 const wishKinds={novel:'小说文件',folder:'文件夹',zip:'ZIP 压缩包'};
 const wishIcons={novel:'file',folder:'folder',zip:'archive'};
-let wishItems=[],editingWish=null;
+let wishItems=[],editingWish=null,wishHub=false,wishShots=[];
 function safeURL(value){try{const url=new URL(value);return ['http:','https:'].includes(url.protocol)?url.href:'';}catch{return '';}}
 function linkHTML(value,label='下载地址'){const url=safeURL(value);return url?`<a class="wish-link" href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${icon('link')}${label} ↗</a>`:'';}
 function setView(view){
@@ -24,7 +24,7 @@ async function refreshWishCount(){try{updateWishCount((await api('/api/wishlist'
 async function loadWishlist(){
   const request=++state.request;renderFilters();$('#empty-state').hidden=true;
   try{const data=await api('/api/wishlist?'+new URLSearchParams({q:state.q}));if(request!==state.request||state.view!=='wish')return;
-    wishItems=data.items;updateWishCount(data.pending);
+    wishItems=data.items;wishHub=data.hub;updateWishCount(data.pending);
     $('#book-grid').innerHTML=data.items.map(wishCardHTML).join('');$('#pagination').innerHTML='';
     const arrived=data.items.length-data.pending;
     $('#result-count').textContent=data.items.length?`${number(data.pending)} 本还没下载${arrived?` · ${number(arrived)} 本已到书架`:''}`:'';
@@ -37,6 +37,7 @@ function openWish(id){
   $('#wish-name').value=item.title;$('#wish-author').value=item.author;$('#wish-url').value=item.url;$('#wish-note').value=item.note;
   $$('input[name="wish-kind"]').forEach(el=>el.checked=el.value===item.kind);
   const url=safeURL(item.url);$('#wish-open-url').hidden=!url;if(url)$('#wish-open-url').href=url;
+  wishShots=[...(item.shots||[])];$('#wish-shots-field').hidden=!wishHub;renderWishShots();
   $('#wish-delete').hidden=!editingWish;$('#wish-delete').textContent='删除';delete $('#wish-delete').dataset.confirm;$('#wish-error').hidden=true;
   $('#wish-dialog').showModal();
 }
@@ -45,11 +46,37 @@ $('#book-grid').addEventListener('click',event=>{const button=event.target.close
 $('#wish-add').onclick=()=>openWish(null);$('#wish-empty-add').onclick=()=>openWish(null);
 $('#wish-form').onsubmit=async event=>{
   event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;$('#wish-error').hidden=true;
-  try{const saved=await api('/api/wishlist/save',{id:editingWish?.id||'',title:$('#wish-name').value,author:$('#wish-author').value,kind:$('input[name="wish-kind"]:checked').value,url:$('#wish-url').value,note:$('#wish-note').value});
+  try{const saved=await api('/api/wishlist/save',{id:editingWish?.id||'',title:$('#wish-name').value,author:$('#wish-author').value,...(wishHub?{shots:wishShots}:{}),kind:$('input[name="wish-kind"]:checked').value,url:$('#wish-url').value,note:$('#wish-note').value});
     $('#wish-dialog').close();toast(saved.downloaded?`《${saved.title}》已经在书架上了`:`已加入想看：${saved.title}`);
     if(state.view==='wish')await loadWishlist();else refreshWishCount();
   }catch(error){$('#wish-error').textContent=error.message;$('#wish-error').hidden=false;}finally{button.disabled=false;}
 };
+// Original screenshots, shared with the wish hub: shown from the hub, added here go up to it when the wish is saved.
+const shotCache=new Map();
+function renderWishShots(){
+  $('#wish-shots').innerHTML=wishShots.map(id=>`<span class="wish-shot"><img data-shot="${escapeHTML(id)}" alt="原截图"><button type="button" class="wish-shot-remove" data-remove-shot="${escapeHTML(id)}" aria-label="删掉这张截图">×</button></span>`).join('')+'<label class="wish-shot-add"><input id="wish-shot-input" type="file" accept="image/*" multiple hidden><span>＋ 添加截图</span></label>';
+  $$('#wish-shots [data-shot]').forEach(async img=>{const id=img.dataset.shot;
+    try{if(!shotCache.has(id))shotCache.set(id,(await api('/api/wishlist/shot?'+new URLSearchParams({id}))).data);img.src=shotCache.get(id);img.onclick=()=>window.open().document.write(`<img src="${shotCache.get(id)}" style="max-width:100%">`);}
+    catch(error){img.closest('.wish-shot').classList.add('missing');img.title=error.message;}});
+  $('#wish-shot-input').onchange=event=>{addWishShots([...event.target.files]);event.target.value='';};
+}
+// The same size the hub keeps: the long side at most 1600px, as JPEG.
+async function shotDataURL(file){
+  const bitmap=await createImageBitmap(file);const scale=Math.min(1,1600/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement('canvas');canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
+  canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+  let data=canvas.toDataURL('image/jpeg',.72);if(data.length>900000)data=canvas.toDataURL('image/jpeg',.5);return data;
+}
+async function addWishShots(files){
+  for(const file of files.filter(f=>f.type.startsWith('image/'))){
+    try{const data=await shotDataURL(file);const {id}=await api('/api/wishlist/shot',{data});shotCache.set(id,data);wishShots.push(id);}catch(error){onError(error);}
+  }
+  renderWishShots();
+}
+$('#wish-shots').addEventListener('click',event=>{const button=event.target.closest('[data-remove-shot]');if(!button)return;
+  wishShots=wishShots.filter(id=>id!==button.dataset.removeShot);renderWishShots();});
+$('#wish-dialog').addEventListener('paste',event=>{if(!wishHub)return;const files=[...(event.clipboardData?.files||[])].filter(f=>f.type.startsWith('image/'));
+  if(files.length){event.preventDefault();addWishShots(files);}});
 $('#wish-delete').onclick=async()=>{
   const button=$('#wish-delete');
   // A second tap confirms; browser confirm dialogs are avoided on phones.

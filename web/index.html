@@ -109,6 +109,7 @@
       <span class="field-label">类型</span><div class="wish-kinds"><label class="check-line"><input type="radio" name="wish-kind" value="novel" checked>小说文件</label><label class="check-line"><input type="radio" name="wish-kind" value="folder">文件夹</label><label class="check-line"><input type="radio" name="wish-kind" value="zip">ZIP 压缩包</label></div>
       <label class="field-label" for="wish-url">下载地址（可选）</label><input id="wish-url" class="full-input" type="url" placeholder="https://" autocomplete="off" spellcheck="false">
       <label class="field-label" for="wish-note">备注（可选）</label><textarea id="wish-note" rows="2" maxlength="1000"></textarea>
+      <div id="wish-shots-field" hidden><span class="field-label">原截图</span><div id="wish-shots" class="wish-shots"></div><p class="field-help">和心愿中枢同步。可以选图片，也可以在这里直接粘贴截图。</p></div>
       <p class="field-help">下载到 Windows 书库后，书名、文件夹名或压缩包名相同的书会自动标为已下载，下载地址也会带到这本书上。</p>
       <p id="wish-error" class="notice" hidden></p>
       <div class="button-row wish-actions"><button class="button primary" type="submit">保存</button><a id="wish-open-url" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>打开下载地址 ↗</a><button id="wish-delete" class="text-button" type="button" hidden>删除</button></div></form>
