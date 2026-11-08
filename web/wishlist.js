@@ -17,7 +17,7 @@ function setView(view){
 function wishCardHTML(item){
   const kind=wishKinds[item.kind]||item.kind;
   if(item.downloaded)return `<article class="book-card wish-card downloaded"><button class="cover-button" data-detail="${item.book_id}" aria-label="查看已下载的 ${escapeHTML(item.title)}"><div class="book-cover wish-cover"><span class="format-badge">${icon(wishIcons[item.kind])}${escapeHTML(kind)}</span><div class="cover-inner"><div class="cover-decoration">ON YOUR SHELF</div><div class="cover-title">${escapeHTML(item.title)}</div></div><div class="cover-seal">已 下 载</div></div></button><div class="card-info"><button class="card-title" data-detail="${item.book_id}">${escapeHTML(item.title)}</button><div class="card-meta"><span class="author">${escapeHTML(item.author||'作者未标注')}</span><span>·</span><span>已到书架</span></div><button class="text-button wish-edit" data-wish="${item.id}">编辑记录</button></div></article>`;
-  return `<article class="book-card wish-card"><button class="cover-button" data-wish="${item.id}" aria-label="编辑想看的 ${escapeHTML(item.title)}"><div class="book-cover wish-cover"><span class="format-badge">${icon(wishIcons[item.kind])}${escapeHTML(kind)}</span><div class="cover-inner"><div class="cover-decoration">WISHLIST · 想看</div><div class="cover-title">${escapeHTML(item.title)}</div>${item.author?`<div class="cover-author">${escapeHTML(item.author)} 著</div>`:'<div class="cover-line"></div>'}</div><div class="cover-seal">尚 未 下 载</div></div></button><div class="card-info"><button class="card-title" data-wish="${item.id}" title="${escapeHTML(item.title)}">${escapeHTML(item.title)}</button><div class="card-meta"><span class="author">${escapeHTML(item.author||'作者未标注')}</span><span>·</span><span>${escapeHTML(kind)}</span></div>${item.note?`<p class="wish-note">${escapeHTML(item.note)}</p>`:''}${linkHTML(item.url)}</div></article>`;
+  return `<article class="book-card wish-card"><button class="cover-button" data-wish="${item.id}" aria-label="编辑想看的 ${escapeHTML(item.title)}"><div class="book-cover wish-cover"><span class="format-badge">${icon(wishIcons[item.kind])}${escapeHTML(kind)}</span><div class="cover-inner"><div class="cover-decoration">WISHLIST · 想看</div><div class="cover-title">${escapeHTML(item.title)}</div>${item.author?`<div class="cover-author">${escapeHTML(item.author)} 著</div>`:'<div class="cover-line"></div>'}</div><div class="cover-seal">尚 未 下 载</div></div></button><div class="card-info"><button class="card-title" data-wish="${item.id}" title="${escapeHTML(item.title)}">${escapeHTML(item.title)}</button><div class="card-meta"><span class="author">${escapeHTML(item.author||'作者未标注')}</span><span>·</span><span>${escapeHTML(kind)}</span></div>${item.note?`<p class="wish-note">${escapeHTML(item.note)}</p>`:''}${linkHTML(item.url)}${linkHTML(item.source_link,'小红书笔记')}</div></article>`;
 }
 function updateWishCount(pending){$('#wish-count').textContent=pending?` ${number(pending)}`:'';}
 async function refreshWishCount(){try{updateWishCount((await api('/api/wishlist')).pending);}catch{}}
@@ -32,12 +32,13 @@ async function loadWishlist(){
   }catch(error){if(request===state.request)$('#book-grid').innerHTML='';onError(error);}
 }
 function openWish(id){
-  editingWish=wishItems.find(item=>item.id===id)||null;const item=editingWish||{title:'',author:'',kind:'novel',url:'',note:''};
+  editingWish=wishItems.find(item=>item.id===id)||null;const item=editingWish||{title:'',author:'',kind:'novel',url:'',note:'',source_link:''};
   $('#wish-dialog-title').textContent=editingWish?'编辑想看':'添加想看';
   $('#wish-name').value=item.title;$('#wish-author').value=item.author;$('#wish-url').value=item.url;$('#wish-note').value=item.note;
   $$('input[name="wish-kind"]').forEach(el=>el.checked=el.value===item.kind);
   const url=safeURL(item.url);$('#wish-open-url').hidden=!url;if(url)$('#wish-open-url').href=url;
   wishShots=[...(item.shots||[])];$('#wish-shots-field').hidden=!wishHub;renderWishShots();
+  $('#wish-source-field').hidden=!wishHub;$('#wish-source').value=item.source_link||'';renderWishSource();
   $('#wish-delete').hidden=!editingWish;$('#wish-delete').textContent='删除';delete $('#wish-delete').dataset.confirm;$('#wish-error').hidden=true;
   $('#wish-dialog').showModal();
 }
@@ -46,11 +47,14 @@ $('#book-grid').addEventListener('click',event=>{const button=event.target.close
 $('#wish-add').onclick=()=>openWish(null);$('#wish-empty-add').onclick=()=>openWish(null);
 $('#wish-form').onsubmit=async event=>{
   event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;$('#wish-error').hidden=true;
-  try{const saved=await api('/api/wishlist/save',{id:editingWish?.id||'',title:$('#wish-name').value,author:$('#wish-author').value,...(wishHub?{shots:wishShots}:{}),kind:$('input[name="wish-kind"]:checked').value,url:$('#wish-url').value,note:$('#wish-note').value});
+  try{const saved=await api('/api/wishlist/save',{id:editingWish?.id||'',title:$('#wish-name').value,author:$('#wish-author').value,...(wishHub?{shots:wishShots,source_link:$('#wish-source').value}:{}),kind:$('input[name="wish-kind"]:checked').value,url:$('#wish-url').value,note:$('#wish-note').value});
     $('#wish-dialog').close();toast(saved.downloaded?`《${saved.title}》已经在书架上了`:`已加入想看：${saved.title}`);
     if(state.view==='wish')await loadWishlist();else refreshWishCount();
   }catch(error){$('#wish-error').textContent=error.message;$('#wish-error').hidden=false;}finally{button.disabled=false;}
 };
+// The 小红书 note the wish was collected from, shared with the wish hub like the screenshots.
+function renderWishSource(){const url=safeURL($('#wish-source').value.trim());$('#wish-open-source').hidden=!url;if(url)$('#wish-open-source').href=url;}
+$('#wish-source').addEventListener('input',renderWishSource);
 // Original screenshots, shared with the wish hub: shown from the hub, added here go up to it when the wish is saved.
 const shotCache=new Map();
 function renderWishShots(){

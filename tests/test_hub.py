@@ -117,5 +117,25 @@ class HubWishlistTests(LibraryFixture,unittest.TestCase):
         self.wishes.unpair()
         with self.assertRaises(ValueError):self.wishes.add_shot('data:image/jpeg;base64,/9j/')
 
+    def test_the_xiaohongshu_link_comes_from_the_hub_and_goes_back_with_the_wish(self):
+        note = 'https://www.xiaohongshu.com/explore/abc'
+        self.fake.add(wish('h1','笔记里的书',link=note,links=['https://pan.quark.cn/s/x'],rating=4))
+        self.wishes.pair(self.fake.token('shuyu'))
+        listed = self.wishes.items()['items'][0]
+        self.assertEqual(listed['source_link'],note)
+        self.assertEqual(listed['url'],'https://pan.quark.cn/s/x','the download address stays apart')
+        self.wishes.save({'id':'h1','title':'笔记里的书','kind':'novel','url':'https://pan.quark.cn/s/x'})
+        self.assertEqual(self.fake.items['h1'][0]['link'],note,'saving without it leaves it alone')
+        self.wishes.save({'id':'h1','title':'笔记里的书','kind':'novel','url':'https://pan.quark.cn/s/x','source_link':'https://xhslink.com/a/new'})
+        sent = self.fake.items['h1'][0]
+        self.assertEqual((sent['link'],sent['links'],sent['rating']),('https://xhslink.com/a/new',['https://pan.quark.cn/s/x'],4))
+        self.assertEqual(self.wishes.item('h1')['source_link'],'https://xhslink.com/a/new')
+        self.fake.add(wish('h1','笔记里的书',link='https://xhslink.com/a/hub',updatedAt='2026-01-02T00:00:00Z'))
+        self.wishes.pull()
+        self.assertEqual(self.wishes.item('h1')['source_link'],'https://xhslink.com/a/hub','changed in the hub, changed here')
+        self.wishes.save({'id':'h1','title':'笔记里的书','kind':'novel','source_link':''})
+        self.assertEqual(self.fake.items['h1'][0]['link'],'','cleared here, cleared in the hub')
+        with self.assertRaises(ValueError):self.wishes.save({'id':'h1','title':'笔记里的书','kind':'novel','source_link':'not a link'})
+
 if __name__=='__main__':
     unittest.main()

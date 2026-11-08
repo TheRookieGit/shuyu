@@ -4,7 +4,8 @@ Connected to the wish hub (心愿中枢, the my-collections site), the wishes ar
 here in hub_wishes, matched against the shelf exactly as before, and every match is reported back so the hub shows
 the book as owned. A match the hub marks 「不是这个」 is not made again. The wishes kept here before connecting go up
 to the hub once and stay as they were, for going back. Download addresses of books (book_links) never leave here.
-The hub's original screenshots of a wish come along and can be added or removed here too, only while connected."""
+The hub's original screenshots of a wish come along and can be added or removed here too, only while connected; so does
+the wish's 小红书 note link (the hub's `link`), which the hub keeps apart from the download address."""
 from datetime import datetime, timezone
 import json
 from pathlib import PurePosixPath
@@ -80,6 +81,7 @@ class Wishlist:
         for row in rows:
             row['downloaded'] = bool(row['book_id'])
             row['shots'] = self.shots_of(row)
+            row['source_link'] = self.link_of(row)
             for key in ('data','rejected','root'):row.pop(key,None)
         return {'items':rows,'pending':sum(not r['downloaded'] for r in rows),'kinds':KINDS,'hub':self.hub.paired}
 
@@ -91,7 +93,7 @@ class Wishlist:
         values = (title,text(data.get('author'),100),kind,clean_url(data.get('url')),text(data.get('note'),1000))
         uid = str(data.get('id') or '')
         now = time.time()
-        if self.hub.paired:uid = self.save_to_hub(uid,values,now,data.get('shots'))
+        if self.hub.paired:uid = self.save_to_hub(uid,values,now,data.get('shots'),data.get('source_link'))
         else:
             with self.lib.db() as db:
                 if uid:
@@ -106,7 +108,7 @@ class Wishlist:
     def item(self,uid):
         row = next((r for r in self.rows() if r['id']==uid),None)
         if not row:raise ValueError('没有找到这条想看记录。')
-        return {k:v for k,v in row.items() if k not in ('data','rejected','root')}|{'downloaded':bool(row['book_id']),'shots':self.shots_of(row)}
+        return {k:v for k,v in row.items() if k not in ('data','rejected','root')}|{'downloaded':bool(row['book_id']),'shots':self.shots_of(row),'source_link':self.link_of(row)}
 
     def delete(self,uid):
         if self.hub.paired:
@@ -188,6 +190,13 @@ class Wishlist:
         except ValueError:shots = None
         return [s for s in shots if isinstance(s,str)] if isinstance(shots,list) else []
 
+    @staticmethod
+    def link_of(row):
+        """The hub's link of a wish: the 小红书 note it was collected from, or any page the wish came from."""
+        try:link = json.loads(row.get('data') or '{}').get('link')
+        except ValueError:link = None
+        return link if isinstance(link,str) else ''
+
     def shot(self,shot_id):
         """One of the hub's screenshots as a data URL; fetched from the hub the first time."""
         try:data = self.hub.shot(str(shot_id or ''))
@@ -201,7 +210,7 @@ class Wishlist:
         try:return {'id':self.hub.add_shot(data)}
         except HubError as exc:raise ValueError(str(exc)) from None
 
-    def save_to_hub(self,uid,values,now,shots=None):
+    def save_to_hub(self,uid,values,now,shots=None,source_link=None):
         title,author,kind,url,note = values
         with self.lib.db() as db:
             row = db.execute('SELECT data FROM hub_wishes WHERE id=?',(uid,)).fetchone() if uid else None
@@ -218,6 +227,10 @@ class Wishlist:
         links = ([first] if first else [])+[l for l in old[1:] if self.url_in(l)!=url]
         item.update(title=title,kind=kind,note=note,extra=extra,links=links[:20],updatedAt=iso(now))
         if isinstance(shots,list):item['shots'] = [str(s)[:64] for s in shots if isinstance(s,str) and s][:30]
+        # Left alone when not given, as the shots are; cleared when given empty.
+        if source_link is not None:
+            try:item['link'] = clean_url(source_link)
+            except ValueError:raise ValueError('小红书链接应以 http:// 或 https:// 开头。') from None
         with self.lib.db() as db:self.store(db,item)
         self.hub.put_wish(item)
         return item['id']
