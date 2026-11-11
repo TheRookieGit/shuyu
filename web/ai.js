@@ -1,5 +1,5 @@
 'use strict';
-const cleaning={book:null,version:'',job:null,page:1,selected:new Set(),seenDefaults:new Set(),timer:null,generation:0,renderKey:''};
+const cleaning={book:null,version:'',job:null,selected:new Set(),seenDefaults:new Set(),timer:null,generation:0,renderKey:'',open:new Set(),groupPages:{}};
 const categoryNames={author_note:'作者话 / 广告',garbled:'乱码修复',censored:'屏蔽字推测',custom:'自定义要求'};
 async function aiSettings(){
   try{const config=await api('/api/ai/config');$('#ai-transport').value=config.transport;$('#ai-terminal-path').value=config.terminal_path;$('#ai-url').value=config.base_url;$('#ai-model').value=config.model;$('#ai-key').value='';$('#ai-clear-key').checked=false;$('#ai-key-help').textContent=config.key_set?'Key 已配置；留空保持不变。':'请填写 Claude API Key，只保存在本机。';$('#ai-test-result').textContent='';$('#ai-terminal-status').textContent='可检测本机安装和订阅登录状态，检测本身不发送小说内容。';showAITransport();if(!$('#ai-settings-dialog').open)$('#ai-settings-dialog').showModal();}catch(error){onError(error);}
@@ -25,11 +25,11 @@ $('#ai-settings-form').onsubmit=event=>{event.preventDefault();saveAI();};$('#ai
 function showClean(){if(!$('#clean-dialog').open)$('#clean-dialog').showModal();}
 function cleanError(error){$('#clean-operation-error').textContent=error.message;$('#clean-operation-error').hidden=false;onError(error);}
 function openCleanup(book,version=''){
-  clearTimeout(cleaning.timer);Object.assign(cleaning,{book,version,job:null,page:1,renderKey:'',generation:cleaning.generation+1});cleaning.selected.clear();cleaning.seenDefaults.clear();
+  clearTimeout(cleaning.timer);Object.assign(cleaning,{book,version,job:null,renderKey:'',open:new Set(),groupPages:{},generation:cleaning.generation+1});cleaning.selected.clear();cleaning.seenDefaults.clear();
   $('#clean-title').textContent=`清理《${book.title}》`;$('#clean-operation-error').hidden=true;$('#clean-options').hidden=false;$('#clean-review').hidden=true;$('#clean-label').value='';$('#clean-patches').innerHTML='';$('#clean-encoding').disabled=['.epub','.eqpub'].includes(book.ext);showClean();
 }
 async function resumeCleanup(id){
-  clearTimeout(cleaning.timer);cleaning.generation++;cleaning.job={id};cleaning.page=1;cleaning.renderKey='';cleaning.selected.clear();cleaning.seenDefaults.clear();$('#clean-label').value='';$('#clean-operation-error').hidden=true;$('#clean-options').hidden=true;$('#clean-review').hidden=false;showClean();await refreshClean();
+  clearTimeout(cleaning.timer);cleaning.generation++;cleaning.job={id};Object.assign(cleaning,{renderKey:'',open:new Set(),groupPages:{}});cleaning.selected.clear();cleaning.seenDefaults.clear();$('#clean-label').value='';$('#clean-operation-error').hidden=true;$('#clean-options').hidden=true;$('#clean-review').hidden=false;showClean();await refreshClean();
 }
 $('#clean-options').onsubmit=async event=>{
   event.preventDefault();const button=$('button[type="submit"]',event.target);button.disabled=true;$('#clean-operation-error').hidden=true;const generation=cleaning.generation;
@@ -50,26 +50,65 @@ function renderClean(job){
   $('#clean-start').hidden=['running','ready'].includes(job.status);$('#clean-start').disabled=!job.can_start&&job.chunks>0;$('#clean-start').textContent=job.chunks===0?'无需发送，完成检查':job.status==='prepared'?(terminal?'使用本机 Claude 订阅开始检查':'发送片段给 Claude，开始检查'):'继续发送未完成片段';
   $('#clean-stop').hidden=job.status!=='running';$('#clean-stop').disabled=job.cancel;$('#clean-stop').textContent=job.cancel?'等待当前请求结束…':'停止后续请求';
   $('#clean-save-panel').hidden=!['ready','paused','failed'].includes(job.status);
-  const renderKey=JSON.stringify([job.id,job.page,job.patch_total,job.status]);
-  if(renderKey!==cleaning.renderKey){
-    cleaning.renderKey=renderKey;
-    $('#clean-patches').innerHTML=job.patches.map(p=>`<article class="clean-patch"><label class="patch-heading"><input type="checkbox" data-patch="${p.id}" ${cleaning.selected.has(p.id)?'checked':''}><strong>${categoryNames[p.category]}</strong><span>${Math.round(p.confidence*100)}% 置信度</span></label><p class="field-help">${escapeHTML(p.reason)}${p.category==='censored'?' · 仅为推测，请核对。':''}</p><div class="patch-comparison"><div><span>原文</span><pre>${escapeHTML(p.before)}</pre></div><div><span>${p.after?'修改建议':'建议删除'}</span><pre>${p.after?escapeHTML(p.after):'（删除这段内容）'}</pre></div></div></article>`).join('')||'<p class="field-help">暂时没有修改建议。</p>';
-    $('#clean-pages').innerHTML=job.pages>1?`<button data-clean-page="${job.page-1}" ${job.page<=1?'disabled':''}>上一页</button><span>${job.page} / ${job.pages}</span><button data-clean-page="${job.page+1}" ${job.page>=job.pages?'disabled':''}>下一页</button>`:'';
+  const renderKey=JSON.stringify([job.id,job.patch_total,job.status]);
+  if(renderKey!==cleaning.renderKey){cleaning.renderKey=renderKey;renderCleanGroups(job);}
+  syncCleanGroups();selectionCount();
+}
+// Suggestions are grouped by kind: a count per kind, one checkbox for the whole kind, details only when opened.
+const cleanGroupOrder=['author_note','garbled','censored','custom'];
+const cleanGroupHints={author_note:'删除作者有话说、求票和站点广告。',garbled:'修复乱码，默认不勾选，建议展开看看。',censored:'根据上下文推测屏蔽字，不能保证是原文，默认不勾选，建议逐条核对。',custom:'按你的要求修改。'};
+function cleanPatchHTML(p){return `<article class="clean-patch"><label class="patch-heading"><input type="checkbox" data-patch="${p.id}" ${cleaning.selected.has(p.id)?'checked':''}><strong>${categoryNames[p.category]||p.category}</strong><span>${Math.round(p.confidence*100)}% 置信度</span></label><p class="field-help">${escapeHTML(p.reason)}${p.category==='censored'?' · 仅为推测，请核对。':''}</p><div class="patch-comparison"><div><span>原文</span><pre>${escapeHTML(p.before)}</pre></div><div><span>${p.after?'修改建议':'建议删除'}</span><pre>${p.after?escapeHTML(p.after):'（删除这段内容）'}</pre></div></div></article>`;}
+function renderCleanGroups(job){
+  $('#clean-pages').innerHTML='';
+  // A Windows backend that has not updated yet sends no groups: list its first suggestions one by one instead.
+  if(!job.groups){$('#clean-patches').innerHTML=job.patches.map(cleanPatchHTML).join('')||'<p class="field-help">暂时没有修改建议。</p>';return;}
+  const kinds=cleanGroupOrder.filter(kind=>job.groups[kind]?.total).concat(Object.keys(job.groups).filter(kind=>!cleanGroupOrder.includes(kind)));
+  $('#clean-patches').innerHTML=kinds.map(kind=>`<section class="clean-group" data-group="${kind}"><div class="clean-group-head"><input type="checkbox" data-group-check="${kind}" aria-label="全选${categoryNames[kind]||kind}"><button class="clean-group-toggle" type="button" data-group-toggle="${kind}" aria-expanded="${cleaning.open.has(kind)}"><strong>${categoryNames[kind]||kind}</strong><span data-group-count="${kind}"></span><span class="caret" aria-hidden="true">▸</span></button></div><p class="field-help">${cleanGroupHints[kind]||''}</p><div class="clean-group-body" data-group-body="${kind}" ${cleaning.open.has(kind)?'':'hidden'}></div></section>`).join('')||'<p class="field-help">暂时没有修改建议。</p>';
+  kinds.filter(kind=>cleaning.open.has(kind)).forEach(loadCleanGroup);
+}
+function syncCleanGroups(){
+  const groups=cleaning.job?.groups||{};
+  for(const kind of Object.keys(groups)){
+    const box=$(`[data-group-check="${kind}"]`);if(!box)continue;
+    const ids=groups[kind].ids,chosen=ids.filter(id=>cleaning.selected.has(id)).length;
+    box.checked=chosen===ids.length;box.indeterminate=chosen>0&&chosen<ids.length;
+    $(`[data-group-count="${kind}"]`).textContent=`${ids.length} 项 · 已选 ${chosen} 项`;
   }
-  selectionCount();
+  $$('#clean-patches [data-patch]').forEach(el=>el.checked=cleaning.selected.has(el.dataset.patch));
+}
+async function loadCleanGroup(kind){
+  const generation=cleaning.generation,page=cleaning.groupPages[kind]||1,body=$(`[data-group-body="${kind}"]`);if(!body)return;
+  if(!body.children.length)body.innerHTML='<p class="field-help">正在读取…</p>';
+  try{const data=await api('/api/clean/job?'+new URLSearchParams({job_id:cleaning.job.id,page,category:kind}));
+    if(generation!==cleaning.generation||!cleaning.open.has(kind))return;cleaning.groupPages[kind]=data.page;
+    $(`[data-group-body="${kind}"]`).innerHTML=data.patches.map(cleanPatchHTML).join('')+(data.pages>1?`<div class="pagination"><button type="button" data-group-page="${kind}" data-to="${data.page-1}" ${data.page<=1?'disabled':''}>上一页</button><span>${data.page} / ${data.pages}</span><button type="button" data-group-page="${kind}" data-to="${data.page+1}" ${data.page>=data.pages?'disabled':''}>下一页</button></div>`:'');
+    syncCleanGroups();}
+  catch(error){cleanError(error);}
 }
 async function refreshClean(){
   clearTimeout(cleaning.timer);if(!cleaning.job)return;const generation=cleaning.generation,id=cleaning.job.id;
-  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:id,page:cleaning.page}));if(generation!==cleaning.generation)return;$('#clean-operation-error').hidden=true;renderClean(job);if(job.status==='running'&&$('#clean-dialog').open)cleaning.timer=setTimeout(refreshClean,1800);}catch(error){if(generation===cleaning.generation){cleanError(error);if($('#clean-dialog').open)cleaning.timer=setTimeout(refreshClean,4000);}}
+  try{const job=await api('/api/clean/job?'+new URLSearchParams({job_id:id}));if(generation!==cleaning.generation)return;$('#clean-operation-error').hidden=true;renderClean(job);if(job.status==='running'&&$('#clean-dialog').open)cleaning.timer=setTimeout(refreshClean,1800);}catch(error){if(generation===cleaning.generation){cleanError(error);if($('#clean-dialog').open)cleaning.timer=setTimeout(refreshClean,4000);}}
 }
 async function cleanAction(action){
   const button=$('#clean-'+action);button.disabled=true;$('#clean-operation-error').hidden=true;
   try{await api('/api/clean/'+(action==='stop'?'cancel':action),{job_id:cleaning.job.id});await refreshClean();}catch(error){cleanError(error);}finally{button.disabled=action==='stop'?!!cleaning.job?.cancel:!cleaning.job?.can_start&&cleaning.job?.chunks>0;}
 }
 $('#clean-start').onclick=()=>cleanAction('start');$('#clean-stop').onclick=()=>cleanAction('stop');
-$('#clean-patches').onchange=event=>{const id=event.target.dataset.patch;if(!id)return;if(event.target.checked)cleaning.selected.add(id);else cleaning.selected.delete(id);selectionCount();};
-$('#clean-none').onclick=()=>{cleaning.selected.clear();$$('[data-patch]').forEach(el=>el.checked=false);selectionCount();};
-$('#clean-pages').onclick=event=>{const button=event.target.closest('[data-clean-page]');if(button&&!button.disabled){cleaning.page=Number(button.dataset.cleanPage);refreshClean();}};
+$('#clean-patches').onchange=event=>{
+  const kind=event.target.dataset.groupCheck,id=event.target.dataset.patch;
+  if(kind)for(const each of cleaning.job.groups[kind].ids)event.target.checked?cleaning.selected.add(each):cleaning.selected.delete(each);
+  else if(id)event.target.checked?cleaning.selected.add(id):cleaning.selected.delete(id);
+  else return;
+  syncCleanGroups();selectionCount();
+};
+$('#clean-patches').onclick=event=>{
+  const toggle=event.target.closest('[data-group-toggle]'),pager=event.target.closest('[data-group-page]');
+  if(toggle){const kind=toggle.dataset.groupToggle,open=!cleaning.open.has(kind);open?cleaning.open.add(kind):cleaning.open.delete(kind);
+    toggle.setAttribute('aria-expanded',String(open));$(`[data-group-body="${kind}"]`).hidden=!open;if(open)loadCleanGroup(kind);}
+  if(pager&&!pager.disabled){cleaning.groupPages[pager.dataset.groupPage]=Number(pager.dataset.to);loadCleanGroup(pager.dataset.groupPage);}
+};
+$('#clean-all').onclick=()=>{const groups=cleaning.job?.groups;if(groups)Object.values(groups).forEach(group=>group.ids.forEach(id=>cleaning.selected.add(id)));else $$('#clean-patches [data-patch]').forEach(el=>cleaning.selected.add(el.dataset.patch));syncCleanGroups();selectionCount();};
+$('#clean-none').onclick=()=>{cleaning.selected.clear();syncCleanGroups();selectionCount();};
 $('#clean-save').onclick=async()=>{
   const button=$('#clean-save');button.disabled=true;$('#clean-operation-error').hidden=true;
   try{const version=await api('/api/clean/save',{job_id:cleaning.job.id,selected:[...cleaning.selected],label:$('#clean-label').value});$('#clean-dialog').close();await loadBooks(false);await openDetail(version.book_id,version.id);toast(`已新建「${version.label}」，原文件和已有版本均保留`);}catch(error){cleanError(error);}finally{button.disabled=false;}
